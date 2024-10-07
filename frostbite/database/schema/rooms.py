@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import String, SmallInteger, Integer, ForeignKey
+from sqlalchemy import String, Integer, ForeignKey
 from sqlalchemy.orm import Mapped, mapped_column
 from frostbite.database import Base
 
@@ -13,11 +13,12 @@ class RoomTable(Base):
     name: Mapped[str] = mapped_column(String(256))
     short_name: Mapped[str] = mapped_column(String(256))
     display_name: Mapped[str] = mapped_column(String(256))
-    music_id: Mapped[int] = mapped_column(Integer)
-    member: Mapped[bool] = mapped_column(default=False)
     path: Mapped[str] = mapped_column(String(256))
-    max_users: Mapped[int] = mapped_column(Integer, default=100)
+    spawn: Mapped[bool] = mapped_column(default=False)
+    member: Mapped[bool] = mapped_column(default=False)
     jump_enabled: Mapped[bool] = mapped_column(default=False)
+    music_id: Mapped[int] = mapped_column(Integer)
+    max_users: Mapped[int] = mapped_column(Integer, default=100)
     required_item: Mapped[int] = mapped_column(
         Integer, ForeignKey("items.id"), nullable=True
     )
