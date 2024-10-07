@@ -7,8 +7,8 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship, joinedload
 from sqlalchemy_utils import StringEncryptedType
 from sqlalchemy_utils.types.encrypted.encrypted_type import AesEngine
 
-from island.core.config import DATABASE_SECRET_KEY
-from island.core.constants.scope import Scope
+from frostbite.core.config import DATABASE_SECRET_KEY
+from frostbite.core.constants.scope import Scope
 from frostbite.database import ASYNC_SESSION, Base
 
 if TYPE_CHECKING:

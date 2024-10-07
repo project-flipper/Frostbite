@@ -2,7 +2,7 @@ from sqlalchemy import String
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.dialects.postgresql import ARRAY
 
-from island.core.constants.scope import Scope
+from frostbite.core.constants.scope import Scope
 from frostbite.database import Base
 
 

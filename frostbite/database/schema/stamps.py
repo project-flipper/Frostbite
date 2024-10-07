@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from island.core.constants.stamps import StampRank
+from frostbite.core.constants.stamps import StampRank
 from sqlalchemy import String, ForeignKey, Enum
 from frostbite.database import Base
 
