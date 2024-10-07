@@ -1,0 +1,59 @@
+from contextlib import asynccontextmanager
+
+import redis.asyncio as redis_async
+from fastapi import FastAPI
+from loguru import logger
+
+from frostbite.core.config import (
+    REDIS_HOST,
+    REDIS_PASSWORD,
+    REDIS_PORT,
+    REDIS_SSL_REQUIRED,
+)
+from frostbite.core.constants.events import EventEnum
+from frostbite.core.realtime import redis
+from frostbite.database import ASYNC_ENGINE, ASYNC_SESSION
+from frostbite.events import dispatch
+
+
+@asynccontextmanager
+async def manage_app_lifespan(app: FastAPI):
+    """FastAPI app lifespan manager
+
+    Args:
+        app (FastAPI)
+    """
+
+    logger.info("Connecting to database")
+    app.state.db_engine = ASYNC_ENGINE
+    app.state.db_session = ASYNC_SESSION
+
+    async with ASYNC_ENGINE.begin() as conn:
+        logger.info("Database connection successful")
+
+    logger.info("Connecting to redis")
+    app.state.redis = redis_pool = redis_async.Redis(
+        host=REDIS_HOST,
+        port=REDIS_PORT,
+        password=str(REDIS_PASSWORD) if REDIS_PASSWORD is not None else REDIS_PASSWORD,
+        ssl=REDIS_SSL_REQUIRED,
+    )
+    redis.set_redis_pool(redis_pool)
+    await app.state.redis.ping()
+    logger.info("Redis connection established")
+
+    logger.info("Dispatching APP_START_EVENT")
+    dispatch(EventEnum.APP_START_EVENT)
+
+    yield
+
+    logger.info("Disconnecting from database")
+    await app.state.db_engine.dispose()
+    logger.info("Disconnected database connection")
+
+    logger.info("Closing redis connection")
+    await app.state.redis.close()
+    logger.info("Redis connection closed")
+
+    logger.info("Dispatching APP_STOP_EVENT")
+    dispatch(EventEnum.APP_STOP_EVENT)
