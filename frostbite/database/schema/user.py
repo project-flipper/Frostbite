@@ -7,13 +7,14 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship, joinedload
 from sqlalchemy_utils import StringEncryptedType
 from sqlalchemy_utils.types.encrypted.encrypted_type import AesEngine
 
-from frostbite.core.config import DATABASE_SECRET_KEY
-from frostbite.core.constants.scope import Scope
+from island.core.config import DATABASE_SECRET_KEY
+from island.core.constants.scope import Scope
 from frostbite.database import ASYNC_SESSION, Base
 
 if TYPE_CHECKING:
     from frostbite.database.schema.ban import BanTable
     from frostbite.database.schema.avatar import AvatarTable
+    from frostbite.database.schema.mascots import MascotTable
 
 
 class UserTable(Base):
@@ -34,9 +35,11 @@ class UserTable(Base):
     )
 
     avatar_id: Mapped[int] = mapped_column(ForeignKey("avatars.id"))
+    mascot_id: Mapped[int] = mapped_column(ForeignKey("mascots.id"), nullable=True)
 
     bans: Mapped[list[BanTable]] = relationship(back_populates="user", lazy="selectin")
     avatar: Mapped[AvatarTable] = relationship(back_populates="user", lazy="joined")
+    mascot: Mapped[MascotTable] = relationship(back_populates="user", lazy="joined")
 
     @property
     def scopes(self) -> list[Scope]:

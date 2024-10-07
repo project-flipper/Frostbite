@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 from sqlalchemy import ForeignKey, sql
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from frostbite.core.constants.ban import BanType
+from island.core.constants.ban import BanType
 from frostbite.database import Base
 
 if TYPE_CHECKING:
