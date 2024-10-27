@@ -2,7 +2,6 @@ from typing import Annotated
 from fastapi import Depends, WebSocket
 from pydantic import BaseModel
 from frostbite.handlers import get_user_id, packet_handlers, send_packet
-from frostbite.models.action import Action
 from frostbite.models.packet import Packet
 
 
@@ -41,6 +40,6 @@ async def handle_game_over(
         ws,
         "game:over",
         GameOverResponse(
-            coins=packet.d.score // 100,
+            coins=packet.d.score // 10,
         ),
     )
