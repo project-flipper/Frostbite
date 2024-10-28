@@ -69,8 +69,9 @@ async def connect(sid, environ, auth):
 
 
 @sio.on('*', namespace='/world')
-async def on_packet(sid, data):
-    return dispatch_packet(sid, data, namespace='/world')
+async def on_packet(sid, event_name, data):
+    packet = Packet(op=event_name, d=data)
+    return dispatch_packet(sid, packet, namespace='/world')
 
 
 @sio.event
