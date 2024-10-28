@@ -9,13 +9,11 @@ from fastapi_events.middleware import EventHandlerASGIMiddleware
 from loguru import logger
 from pydantic import ValidationError
 from sentry_sdk.integrations.loguru import LoguruIntegration
-from starlette.exceptions import HTTPException
 from starlette.middleware.cors import CORSMiddleware
 from starlette.types import ASGIApp
 from starlette_context.middleware import RawContextMiddleware
 
 import frostbite.database.schema as _
-import frostbite.routes
 from frostbite import events, handlers
 from frostbite.core.config import (
     ALLOWED_HOSTS,
@@ -28,8 +26,6 @@ from frostbite.core.config import (
     WORLD_PACKETS_MIDDLEWARE_ID,
 )
 from frostbite.core.socket import sio
-from frostbite.core.error.http_error import http_error_handler
-from frostbite.core.error.validation_error import http422_error_handler
 from frostbite.core.lifespan import manage_app_lifespan
 from frostbite.utils.routes import get_modules
 
