@@ -29,7 +29,7 @@ from frostbite.core.config import (
 from frostbite.core.error.http_error import http_error_handler
 from frostbite.core.error.validation_error import http422_error_handler
 from frostbite.core.lifespan import manage_app_lifespan
-from frostbite.routes import router, sio
+from frostbite.routes import sio
 from frostbite.utils.routes import get_modules
 
 print(
@@ -120,20 +120,15 @@ def get_application() -> ASGIApp:
     )
 
     logger.info("Frostbite adding packet handlers")
-
     get_modules(handlers, global_namespace="FROSTBITE_HANDLERS_LIST")
 
-    logger.info("Frostbite adding WS endpoint routers")
-    application.include_router(router, prefix=_prefix)
-
     logger.info("Frostbite adding events")
-
     get_modules(events, global_namespace="FROSTBITE_EVENTS_LIST")
+
+    sio_application = socketio.ASGIApp(sio, other_asgi_app=application)
 
     logger.info("Frostbite setup complete")
     logger.info("Frostbite is ready to be started in a ASGI service")
-
-    sio_application = socketio.ASGIApp(sio, other_asgi_app=application)
 
     return sio_application
 
