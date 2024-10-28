@@ -1,6 +1,7 @@
 import sys
 
 import sentry_sdk
+import socketio
 from fastapi import FastAPI
 from fastapi.exceptions import RequestValidationError
 from fastapi_events.handlers.local import local_handler
@@ -10,6 +11,7 @@ from pydantic import ValidationError
 from sentry_sdk.integrations.loguru import LoguruIntegration
 from starlette.exceptions import HTTPException
 from starlette.middleware.cors import CORSMiddleware
+from starlette.types import ASGIApp
 from starlette_context.middleware import RawContextMiddleware
 
 import frostbite.database.schema as _
@@ -27,7 +29,7 @@ from frostbite.core.config import (
 from frostbite.core.error.http_error import http_error_handler
 from frostbite.core.error.validation_error import http422_error_handler
 from frostbite.core.lifespan import manage_app_lifespan
-from frostbite.routes import router
+from frostbite.routes import router, sio
 from frostbite.utils.routes import get_modules
 
 print(
@@ -62,7 +64,7 @@ def initialize_sentry():
     )
 
 
-def get_application() -> FastAPI:
+def get_application() -> ASGIApp:
     catch_exceptions()
     initialize_sentry()
 
@@ -108,16 +110,7 @@ def get_application() -> FastAPI:
     logger.debug("Frostbite adding Starlette Context Middleware")
     application.add_middleware(RawContextMiddleware)
 
-    #logger.debug("Frostbite adding World Manager Middleware")
-    #application.add_middleware(WorldMiddleware)
-
     logger.info("Frostbite adding startup and shutdown events")
-
-    logger.info("Frostbite adding exception handlers")
-
-    application.add_exception_handler(HTTPException, http_error_handler)
-    application.add_exception_handler(RequestValidationError, http422_error_handler)
-    application.add_exception_handler(ValidationError, http422_error_handler)
 
     logger.debug(f"Frostbite adding Packet Handler ASGI Middleware for {WORLD_PACKETS_MIDDLEWARE_ID}")
     application.add_middleware(
@@ -140,7 +133,9 @@ def get_application() -> FastAPI:
     logger.info("Frostbite setup complete")
     logger.info("Frostbite is ready to be started in a ASGI service")
 
-    return application
+    sio_application = socketio.ASGIApp(sio, other_asgi_app=application)
+
+    return sio_application
 
 
 app = get_application()

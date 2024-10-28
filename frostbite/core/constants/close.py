@@ -7,3 +7,4 @@ class CloseCode(IntEnum):
     # Auth
     AUTHENTICATION_FAILED = 4000
     AUTHENTICATION_TIMEOUT = 4001
+    TOKEN_EXPIRED = 4002

@@ -71,7 +71,10 @@ SENTRY_DSN = config("SENTRY_DSN", cast=Secret, default="")
 REDIS_HOST = config("REDIS_HOST", cast=str, default="127.0.0.1")
 REDIS_PORT = config("REDIS_PORT", cast=int, default=6379)
 REDIS_PASSWORD = config("REDIS_PASSWORD", cast=Secret, default=None)
-REDIS_SSL_REQUIRED = config("REDIS_SSL_REQUIRED", cast=bool, default=True)
+REDIS_SSL_REQUIRED = config("REDIS_SSL_REQUIRED", cast=bool, default=False)
+REDIS_SIO_DB = config("REDIS_SIO_DB", cast=int, default=0)
+
+REDIS_URL = f"redis://{REDIS_HOST}:{REDIS_PORT}/{REDIS_SIO_DB}"
 
 # General
 FASTAPI_EVENTS_MIDDLEWARE_ID = config(

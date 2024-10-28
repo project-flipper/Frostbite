@@ -18,16 +18,30 @@ async def handle_ping(ctx, *args, **kwargs):
 """
 
 import asyncio
+
+import socketio
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, WebSocketException
 from loguru import logger
 from pydantic import BaseModel, ValidationError
 
+from frostbite.core.config import REDIS_URL, ALLOWED_HOSTS
 from frostbite.core.constants.close import CloseCode
 from frostbite.core.constants.events import EventEnum
 from frostbite.handlers import dispatch as dispatch_packet
 from frostbite.events import _force_fastapi_events_dispatch_as_task, dispatch as global_dispatch
 from frostbite.models.packet import Packet
 from frostbite.utils.auth import get_current_user_id, get_oauth_data
+
+SocketIOAsyncRedisManager = socketio.AsyncRedisManager(REDIS_URL)
+SocketIOAsyncServer = socketio.AsyncServer(
+    async_mode='asgi',
+    client_manager=SocketIOAsyncRedisManager,
+    cors_allowed_origins=ALLOWED_HOSTS or ["http://localhost"]  # Configure CORS as needed
+)
+
+mgr = SocketIOAsyncRedisManager
+sio = SocketIOAsyncServer
+__all__ = ["mgr", "sio"]
 
 router = APIRouter()
 

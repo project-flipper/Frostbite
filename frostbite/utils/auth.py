@@ -31,6 +31,15 @@ oauth_error = HTTPException(
     ),
 )
 
+oauth_expired_error = HTTPException(
+    status_code=status.HTTP_401_UNAUTHORIZED,
+    detail=Error(
+        error_type="user.token.invalid",
+        error_code=1101,
+        error_description="OAuth token expired.",
+    ),
+)
+
 scope_error = HTTPException(
     status_code=status.HTTP_403_FORBIDDEN,
     detail=Error(
@@ -105,10 +114,12 @@ async def get_user_scopes(
     return user.scopes if not default_scopes else default_scopes + user.scopes
 
 
-def get_oauth_data(oauth: Annotated[str, Depends(OAUTH2_SCHEME)]) -> dict[str, Any]:
+def get_oauth_data(oauth: Annotated[str, Depends(OAUTH2_SCHEME)], *, raise_expired=False) -> dict[str, Any]:
     try:
         data = jwt.decode(oauth, str(SECRET_KEY), algorithms=[JWT_ALGORITHM.value])
-    except (jwt.DecodeError, jwt.ExpiredSignatureError):
+    except (jwt.DecodeError, jwt.ExpiredSignatureError) as e:
+        if isinstance(e, jwt.ExpiredSignatureError) and raise_expired:
+            raise e
         raise oauth_error
 
     return data
