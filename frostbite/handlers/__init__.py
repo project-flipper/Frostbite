@@ -40,7 +40,7 @@ class DelayedInjection:
 
 class PacketHandler(BaseEventHandler):
     def __init__(self):
-        self._registry: dict[str, list[Callable]] = {}
+        self._registry: dict[str, Callable] = {}
 
     def register(
         self,
@@ -49,15 +49,15 @@ class PacketHandler(BaseEventHandler):
         *,
         dependencies: list[ParamDepends] | None = None,
     ):
-        """Register a packet handler.
+        """Register a handler for the given packet.
 
         Usage:
             from frostbite.handlers import packet_handlers
+            from frostbite.models.packet import Packet
 
             @packet_handlers.register("my:event") # Register a handler as a decorator
-            async def handle_my_event(event: Event):
-                event_name, payload = event
-                print(f"Received event {event_name} with payload {payload}")
+            async def handle_my_event(sid: string, packet: Packet):
+                print(f"Received event {packet.op} with payload {packet.d}")
 
         Args:
             :param op: The operation to be associated with the handler. Use "*", the default value, to match all packets.
@@ -89,45 +89,45 @@ class PacketHandler(BaseEventHandler):
         ws: WebSocket = payload[0]
         packet: Packet = payload[1]
 
-        handlers = self._get_handlers_for_event(event_name=event_name)
+        handler = self._get_handler_for_event(event_name=event_name)
 
-        if len(handlers) == 0:
-            logger.warning(f"No handlers found for {event_name}")
+        if handler is None:
+            logger.warning(f"No handler found for {event_name}")
+            return
 
-        for handler in handlers:
-            async with AsyncExitStack() as cm:
-                # resolve dependencies
-                dependant: Dependant = getattr(handler, "__dependant__")
+        async with AsyncExitStack() as cm:
+            # resolve dependencies
+            dependant: Dependant = getattr(handler, "__dependant__")
 
-                if not dependant.call:
-                    continue
+            if not dependant.call:
+                return
 
-                try:
-                    solved = await solve_dependencies(
-                        request=ws,
-                        dependant=dependant,
-                        async_exit_stack=cm,
-                        body=packet.d,
-                        dependency_overrides_provider=ws.app,
-                        embed_body_fields=True,
+            try:
+                solved = await solve_dependencies(
+                    request=ws,
+                    dependant=dependant,
+                    async_exit_stack=cm,
+                    body=packet.d,
+                    dependency_overrides_provider=ws.app,
+                    embed_body_fields=True,
+                )
+
+                if inspect.iscoroutinefunction(dependant.call):
+                    await dependant.call(**solved.values)
+                else:
+                    loop = asyncio.get_event_loop()
+                    await loop.run_in_executor(
+                        None, functools.partial(dependant.call, **solved.values)
                     )
-
-                    if inspect.iscoroutinefunction(dependant.call):
-                        await dependant.call(**solved.values)
-                    else:
-                        loop = asyncio.get_event_loop()
-                        await loop.run_in_executor(
-                            None, functools.partial(dependant.call, **solved.values)
-                        )
-                except ValidationError:
-                    logger.opt(exception=e).error(e)
-                    await ws.close(CloseCode.INVALID_DATA, "Invalid data received")
-                except WebSocketException as e:
-                    await ws.close(e.code, e.reason)
-                except Exception as e:
-                    logger.opt(exception=e).error(
-                        "An error occurred when dispatching a packet"
-                    )
+            except ValidationError:
+                logger.opt(exception=e).error(e)
+                await ws.close(CloseCode.INVALID_DATA, "Invalid data received")
+            except WebSocketException as e:
+                await ws.close(e.code, e.reason)
+            except Exception as e:
+                logger.opt(exception=e).error(
+                    "An error occurred when dispatching a packet"
+                )
 
     def _register_handler(
         self,
@@ -138,8 +138,8 @@ class PacketHandler(BaseEventHandler):
         if not isinstance(event_name, str):
             event_name = str(event_name)
 
-        if event_name not in self._registry:
-            self._registry[event_name] = []
+        if event_name in self._registry and event_name != "*":
+            logger.warn(f"Overwriting handler for {event_name}")
 
         path_format = f"packet:{event_name}"
 
@@ -154,7 +154,7 @@ class PacketHandler(BaseEventHandler):
             )
         setattr(func, "__dependant__", dependant)
 
-        self._registry[event_name].append(func)
+        self._registry[event_name] = func
 
     def _get_injection_params(self) -> dict[Any, Any]:
         return {
@@ -194,17 +194,14 @@ class PacketHandler(BaseEventHandler):
         else:
             func.__signature__ = sig
 
-    def _get_handlers_for_event(self, event_name):
+    def _get_handler_for_event(self, event_name) -> Callable | None:
         if not isinstance(event_name, str):
             event_name = str(event_name)
 
-        # TODO consider adding a cache
-        handlers = []
-        for event_name_pattern, registered_handlers in self._registry.items():
-            if fnmatch.fnmatch(event_name, event_name_pattern):
-                handlers.extend(registered_handlers)
+        if event_name in self._registry:
+            return self._registry[event_name]
 
-        return handlers
+        return self._registry.get(event_name)
 
     def _unregister_handler(self, event_name, func):
         if not isinstance(event_name, str):
@@ -213,7 +210,7 @@ class PacketHandler(BaseEventHandler):
         if event_name not in self._registry:
             return
 
-        self._registry[event_name].remove(func)
+        del self._registry[event_name]
 
 
 def dispatch(ws: WebSocket, packet: Packet):
