@@ -16,9 +16,9 @@ from fastapi.dependencies.utils import (
     solve_dependencies,
 )
 from fastapi.params import Depends as ParamDepends
-from fastapi_events.typing import Event
 from loguru import logger
 from pydantic import ValidationError
+from socketio.exceptions import ConnectionRefusedError
 
 from frostbite.core.socket import sio
 from frostbite.core.config import WORLD_PACKETS_MIDDLEWARE_ID
@@ -29,7 +29,8 @@ from frostbite.events import dispatch as global_dispatch
 from frostbite.models.packet import Packet
 from frostbite.utils.auth import get_current_user_id, get_oauth_data
 
-_sid: ContextVar[Event] = ContextVar("sid", default=None)
+type Event = tuple[str, Packet, str | None]
+_event: ContextVar[Event] = ContextVar("sid")
 
 
 class DelayedInjection:
@@ -84,10 +85,13 @@ class PacketHandler:
         """
         self._unregister_handler(op, func)
 
-    async def handle(self, sid: str, packet: Packet, *, namespace: str) -> None:
-        _sid.set(sid)
+    async def handle(self, sid: str, packet: Packet, *, namespace: str | None = None) -> None:
+        _event.set((sid, packet, namespace))
 
         handler = self._get_handler_for_event(event_name=packet.op)
+        environ = await sio.get_environ(sid, namespace)
+
+        print(environ)
 
         if handler is None:
             logger.warning(f"No handler found for {packet.op}")
@@ -101,12 +105,13 @@ class PacketHandler:
                 return
 
             try:
+                # TODO: mock request object? or access an internal API to fetch it
                 solved = await solve_dependencies(
-                    request=ws,
+                    request=None, # request object
                     dependant=dependant,
                     async_exit_stack=cm,
                     body=packet.d,
-                    dependency_overrides_provider=sio.app,
+                    dependency_overrides_provider=sio.app, # app instance
                     embed_body_fields=True,
                 )
 
@@ -119,9 +124,9 @@ class PacketHandler:
                     )
             except ValidationError:
                 logger.opt(exception=e).error(e)
-                await ws.close(CloseCode.INVALID_DATA, "Invalid data received")
+                raise ConnectionError(CloseCode.INVALID_DATA, "Invalid data received")
             except WebSocketException as e:
-                await ws.close(e.code, e.reason)
+                raise ConnectionError(e.code, e.reason)
             except Exception as e:
                 logger.opt(exception=e).error(
                     "An error occurred when dispatching a packet"
@@ -137,7 +142,7 @@ class PacketHandler:
             event_name = str(event_name)
 
         if event_name in self._registry and event_name != "*":
-            logger.warn(f"Overwriting handler for {event_name}")
+            logger.warning(f"Overwriting handler for {event_name}")
 
         path_format = f"packet:{event_name}"
 
@@ -156,13 +161,14 @@ class PacketHandler:
 
     def _get_injection_params(self) -> dict[Any, Any]:
         return {
-            Event: EventDep,
+            "sid": SidDep,
             Packet: PacketDep,
             "packet": DelayedInjection(
                 lambda p: Annotated[
                     p.annotation, Depends(get_custom_packet(p.annotation))
                 ]
             ),
+            "namespace": NamespaceDep,
         }
 
     def _inject_params(self, func: Callable) -> None:
@@ -211,15 +217,13 @@ class PacketHandler:
         del self._registry[event_name]
 
 
-def get_event() -> Event:
-    return _sid.get()
+async def get_session() -> dict[str, Any]:
+    sid = _event.get()[0]
+    return await sio.get_session(sid)
 
 
-EventDep = Annotated[Event, Depends(get_event)]
-
-
-def get_user_id(ws: WebSocket) -> int:
-    return ws.state.user_id
+def get_user_id(session: Annotated[dict[str, Any], Depends(get_session)]) -> int:
+    return session['user_id']
 
 
 async def get_current_user(user_id: Annotated[int, Depends(get_user_id)]) -> UserTable:
@@ -233,11 +237,32 @@ async def get_current_user(user_id: Annotated[int, Depends(get_user_id)]) -> Use
     return user
 
 
+def get_event() -> Event:
+    return _event.get()
+
+
+EventDep = Annotated[Event, Depends(get_event)]
+
+
+def get_sid(event=Depends(get_event)) -> str:
+    return event[0]
+
+
+SidDep = Annotated[str, Depends(get_sid)]
+
+
 def get_packet(event=Depends(get_event)) -> Packet:
-    return event[1][1]
+    return event[1]
 
 
 PacketDep = Annotated[Packet, Depends(get_packet)]
+
+
+def get_namespace(event=Depends(get_event)) -> str | None:
+    return event[2]
+
+
+NamespaceDep = Annotated[str | None, Depends(get_namespace)]
 
 
 def get_custom_packet(cls=Packet):
@@ -264,8 +289,8 @@ async def authenticate(token: str) -> int:
         raise ConnectionRefusedError(CloseCode.AUTHENTICATION_FAILED, "Authentication failed")
 
 
-@sio.event
-async def connect(sid: str, environ, auth):
+@sio.on('connect', namespace='/world')
+async def handle_socket_connect(sid: str, environ: dict[str, Any], auth: dict[str, Any]):
     token = auth.get('token')
     user_id = await authenticate(token)
 
@@ -276,13 +301,13 @@ async def connect(sid: str, environ, auth):
 
 
 @sio.on('*', namespace='/world')
-async def on_packet(event_name: str, sid: str, data):
+async def on_packet(event_name: str, sid: str, data: Any):
     packet = Packet(op=event_name, d=data)
     return packet_handlers.handle(sid, packet, namespace='/world')
 
 
-@sio.event
-async def disconnect(sid: str):
+@sio.on('disconnect', namespace='/world')
+async def handle_socket_disconnect(sid: str):
     session = await sio.get_session(sid)
     user_id = session['user_id']
 
