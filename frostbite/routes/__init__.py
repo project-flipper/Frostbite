@@ -17,34 +17,17 @@ async def handle_ping(ctx, *args, **kwargs):
 
 """
 
-import asyncio
-
 import jwt
-import socketio
 from jwt.exceptions import InvalidTokenError, ExpiredSignatureError
 from socketio.exceptions import ConnectionError, ConnectionRefusedError
-from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, WebSocketException
 from loguru import logger
-from pydantic import BaseModel, ValidationError
 
-from frostbite.core.config import REDIS_URL, ALLOWED_HOSTS
 from frostbite.core.constants.close import CloseCode
 from frostbite.core.constants.events import EventEnum
 from frostbite.handlers import dispatch as dispatch_packet
 from frostbite.events import _force_fastapi_events_dispatch_as_task, dispatch as global_dispatch
 from frostbite.models.packet import Packet
 from frostbite.utils.auth import get_current_user_id, get_oauth_data
-
-SocketIOAsyncRedisManager = socketio.AsyncRedisManager(REDIS_URL)
-SocketIOAsyncServer = socketio.AsyncServer(
-    async_mode='asgi',
-    client_manager=SocketIOAsyncRedisManager,
-    cors_allowed_origins=ALLOWED_HOSTS or ["http://localhost"]  # Configure CORS as needed
-)
-
-mgr = SocketIOAsyncRedisManager
-sio = SocketIOAsyncServer
-__all__ = ["mgr", "sio"]
 
 
 async def authenticate(token: str) -> int:
@@ -58,7 +41,7 @@ async def authenticate(token: str) -> int:
 
 
 @sio.event
-async def connect(sid, environ, auth):
+async def connect(sid: str, environ, auth):
     token = auth.get('token')
     user_id = await authenticate(token)
 
@@ -69,13 +52,13 @@ async def connect(sid, environ, auth):
 
 
 @sio.on('*', namespace='/world')
-async def on_packet(sid, event_name, data):
+async def on_packet(sid: str, event_name: str, data):
     packet = Packet(op=event_name, d=data)
     return dispatch_packet(sid, packet, namespace='/world')
 
 
 @sio.event
-async def disconnect(sid: string):
+async def disconnect(sid: str):
     session = await sio.get_session(sid)
     user_id = session['user_id']
 
