@@ -15,6 +15,7 @@ from starlette.types import ASGIApp
 from starlette_context.middleware import RawContextMiddleware
 
 import frostbite.database.schema as _
+import frostbite.routes
 from frostbite import events, handlers
 from frostbite.core.config import (
     ALLOWED_HOSTS,
@@ -26,10 +27,10 @@ from frostbite.core.config import (
     SENTRY_DSN,
     WORLD_PACKETS_MIDDLEWARE_ID,
 )
+from frostbite.core.socket import sio
 from frostbite.core.error.http_error import http_error_handler
 from frostbite.core.error.validation_error import http422_error_handler
 from frostbite.core.lifespan import manage_app_lifespan
-from frostbite.routes import sio
 from frostbite.utils.routes import get_modules
 
 print(
