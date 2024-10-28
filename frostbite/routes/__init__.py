@@ -19,7 +19,10 @@ async def handle_ping(ctx, *args, **kwargs):
 
 import asyncio
 
+import jwt
 import socketio
+from jwt.exceptions import InvalidTokenError, ExpiredSignatureError
+from socketio.exceptions import ConnectionError, ConnectionRefusedError
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, WebSocketException
 from loguru import logger
 from pydantic import BaseModel, ValidationError
@@ -43,63 +46,38 @@ mgr = SocketIOAsyncRedisManager
 sio = SocketIOAsyncServer
 __all__ = ["mgr", "sio"]
 
-router = APIRouter()
 
-
-class AuthData(BaseModel):
-    token: str
-
-
-async def receive_packet[P: Packet](ws: WebSocket, *, cls: type[P] = Packet) -> P:
-    return cls.model_validate(await ws.receive_json())
-
-
-async def handle_authentication(ws: WebSocket) -> int | None:
+async def authenticate(token: str) -> int:
     try:
-        async with asyncio.timeout(15):
-            packet = await receive_packet(ws, cls=Packet[AuthData])
-    except asyncio.TimeoutError:
-        raise WebSocketException(
-            CloseCode.AUTHENTICATION_TIMEOUT, "Client did not respond within the required time")
-
-    try:
-        token = packet.d.token
-        oauth = get_oauth_data(token)
+        oauth = get_oauth_data(token, raise_expired=True)
         return get_current_user_id(oauth)
+    except ExpiredSignatureError:
+        raise ConnectionRefusedError(CloseCode.TOKEN_EXPIRED, "Token expired")
     except HTTPException:
-        raise WebSocketException(
-            CloseCode.AUTHENTICATION_FAILED, "Authentication failed")
+        raise ConnectionRefusedError(CloseCode.AUTHENTICATION_FAILED, "Authentication failed")
 
 
-@router.websocket("/world")
-async def world_connection(ws: WebSocket):
-    await ws.accept()
+@sio.event
+async def connect(sid, environ, auth):
+    token = auth.get('token')
+    user_id = await authenticate(token)
 
-    global_dispatch(EventEnum.WORLD_CLIENT_CONNECT, ws)
+    # save user_id to session
+    await sio.save_session(sid, {'user_id': user_id})
 
-    try:
-        user_id = await handle_authentication(ws)
+    global_dispatch(EventEnum.WORLD_CLIENT_CONNECT, sid)
 
-        if user_id is None:
-            return
 
-        # TODO: Validate connection while invalidating others
+@sio.on('*', namespace='/world')
+async def on_packet(sid, data):
+    return dispatch_packet(sid, data, namespace='/world')
 
-        ws.state.user_id = user_id
 
-        global_dispatch(EventEnum.WORLD_CLIENT_AUTH, ws)
+@sio.event
+async def disconnect(sid: string):
+    session = await sio.get_session(sid)
+    user_id = session['user_id']
 
-        while True:
-            packet = await receive_packet(ws)
-            with _force_fastapi_events_dispatch_as_task():
-                dispatch_packet(ws, packet)
-    except ValidationError:
-        raise WebSocketException(
-            CloseCode.INVALID_DATA, "Invalid data received")
-    except WebSocketDisconnect:
-        pass
-    except Exception as e:
-        logger.opt(exception=e).error(
-            "An error has occurred inside a WebSocket connection")
+    logger.info(f"User {user_id} disconnected")
+    global_dispatch(EventEnum.WORLD_CLIENT_DISCONNECT, sid)
 
-    global_dispatch(EventEnum.WORLD_CLIENT_DISCONNECT, ws)
