@@ -1,9 +1,12 @@
 import random
-from typing import Annotated, Any
-from fastapi import Depends, WebSocket
+from typing import Annotated
+
+from fastapi import Depends
 from pydantic import BaseModel
+
+from frostbite.core.socket import send_packet, sio
 from frostbite.database.schema.user import UserTable
-from frostbite.handlers import packet_handlers, send_packet, get_current_user
+from frostbite.handlers import get_current_room_key, get_current_user, packet_handlers
 from frostbite.models.action import Action
 from frostbite.models.packet import Packet
 from frostbite.models.player import Player
@@ -58,25 +61,66 @@ SPAWN_ROOMS = [
 ]  # TODO: get from crumbs instead and verify if full
 
 
-async def send_packet_to_room(room_id: int, op: str, d: Any):
-    pass
-
 def get_safe_coordinates(room_id: int) -> tuple[float, float]:
     return random.randint(473, 1247), random.randint(704, 734)
 
 
+async def add_to_room(
+    room_id: int,
+    sid: str,
+    *,
+    user: UserTable,
+    x: float,
+    y: float,
+    namespace: str | None = None,
+) -> None:
+    room_key = f"rooms:{room_id}"
+
+    player = Player(
+        user=await User.from_table(user),
+        x=x,
+        y=y,
+        action=DEFAULT_ACTION,
+    )
+
+    await sio.enter_room(sid, room_key)
+
+    await send_packet(
+        room_key,
+        "player:add",
+        player,
+        skip_sid=sid,
+        namespace=namespace,
+    )
+
+    await send_packet(
+        sid,
+        "room:join",
+        RoomJoinResponse(
+            room_id=room_id,
+            players=[
+                player
+            ],
+            waddles=[],
+        ),
+    )
+
+
 @packet_handlers.register("room:join")
 async def handle_room_join(
-    ws: WebSocket,
+    sid: str,
     packet: Packet[RoomJoinData],
     user: Annotated[UserTable, Depends(get_current_user)],
 ):
+    room_key = f"rooms:{packet.d.room_id}"
     safe = get_safe_coordinates(packet.d.room_id)
     x = packet.d.x or safe[0]
     y = packet.d.y or safe[1]
 
+    await sio.enter_room(sid, room_key)
+
     await send_packet(
-        ws,
+        sid,
         "room:join",
         RoomJoinResponse(
             room_id=packet.d.room_id,
@@ -95,35 +139,26 @@ async def handle_room_join(
 
 @packet_handlers.register("room:spawn")
 async def handle_room_spawn(
-    ws: WebSocket, packet: Packet, user: Annotated[UserTable, Depends(get_current_user)]
+    sid: str,
+    user: Annotated[UserTable, Depends(get_current_user)],
 ):
     room_id = random.choice(SPAWN_ROOMS)
     # TODO: get available rooms and dispatch a room:join with a safe x, y from crumbs
     safe = get_safe_coordinates(room_id)
 
-    await send_packet(
-        ws,
-        "room:join",
-        RoomJoinResponse(
-            room_id=room_id,
-            players=[
-                Player(
-                    user=await User.from_table(user),
-                    x=safe[0],
-                    y=safe[1],
-                    action=DEFAULT_ACTION,
-                )
-            ],
-            waddles=[],
-        ),
+    await add_to_room(
+        room_id, sid, user=user, x=safe[0], y=safe[1]
     )
+
 
 @packet_handlers.register("waddle:join")
 async def handle_waddle_join(
-    ws: WebSocket, packet: Packet[WaddleJoinData], user: Annotated[UserTable, Depends(get_current_user)]
+    packet: Packet[WaddleJoinData],
+    user: Annotated[UserTable, Depends(get_current_user)],
+    room_key: Annotated[str, Depends(get_current_room_key)],
 ):
     await send_packet(
-        ws,
+        room_key,
         "waddle:join",
         WaddleJoinResponse(
             waddle_id=packet.d.waddle_id,
@@ -131,14 +166,18 @@ async def handle_waddle_join(
         ),
     )
 
+
 @packet_handlers.register("waddle:leave")
 async def handle_waddle_leave(
-    ws: WebSocket, packet: Packet[WaddleLeaveData], user: Annotated[UserTable, Depends(get_current_user)]
+    packet: Packet[WaddleLeaveData],
+    user: Annotated[UserTable, Depends(get_current_user)],
+    room_key: Annotated[str, Depends(get_current_room_key)],
 ):
-    await send_packet(ws,
+    await send_packet(
+        room_key,
         "waddle:leave",
         WaddleLeaveResponse(
             waddle_id=packet.d.waddle_id,
             player=user.id,
-        )
+        ),
     )

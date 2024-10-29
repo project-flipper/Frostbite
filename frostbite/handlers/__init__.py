@@ -1,33 +1,32 @@
 from __future__ import annotations
 
 import asyncio
-import fnmatch
 import functools
 import inspect
 from contextlib import AsyncExitStack
 from contextvars import ContextVar
 from typing import Annotated, Any, Callable
 
-from fastapi import Depends, WebSocket, WebSocketException
+from fastapi import Depends, HTTPException
 from fastapi.dependencies.models import Dependant
-from fastapi.dependencies.utils import (
-    get_dependant,
-    get_parameterless_sub_dependant,
-    solve_dependencies,
-)
+from fastapi.dependencies.utils import get_dependant, get_parameterless_sub_dependant
 from fastapi.params import Depends as ParamDepends
-from fastapi_events.dispatcher import dispatch as event_dispatcher
-from fastapi_events.handlers.base import BaseEventHandler
-from fastapi_events.typing import Event
+from jwt import ExpiredSignatureError
 from loguru import logger
 from pydantic import ValidationError
+from socketio.exceptions import ConnectionRefusedError
 
-from frostbite.core.config import WORLD_PACKETS_MIDDLEWARE_ID
 from frostbite.core.constants.close import CloseCode
+from frostbite.core.constants.events import EventEnum
+from frostbite.core.socket import SocketException, send_and_disconnect, send_packet, sio
 from frostbite.database.schema.user import UserTable
+from frostbite.events import dispatch as global_dispatch
 from frostbite.models.packet import Packet
+from frostbite.utils.auth import get_current_user_id, get_oauth_data
+from frostbite.utils.dependencies import solve_dependencies
 
-_event: ContextVar[Event] = ContextVar("event")
+type Event = tuple[str, Packet, str | None]
+_event: ContextVar[Event] = ContextVar("sid")
 
 
 class DelayedInjection:
@@ -38,7 +37,7 @@ class DelayedInjection:
         return self._callback(param)
 
 
-class PacketHandler(BaseEventHandler):
+class PacketHandler:
     def __init__(self):
         self._registry: dict[str, Callable] = {}
 
@@ -82,17 +81,15 @@ class PacketHandler(BaseEventHandler):
         """
         self._unregister_handler(op, func)
 
-    async def handle(self, event: Event) -> None:
-        _event.set(event)
+    async def handle(
+        self, sid: str, packet: Packet, *, namespace: str | None = None
+    ) -> None:
+        _event.set((sid, packet, namespace))
 
-        event_name, payload = event
-        ws: WebSocket = payload[0]
-        packet: Packet = payload[1]
-
-        handler = self._get_handler_for_event(event_name=event_name)
+        handler = self._get_handler_for_event(event_name=packet.op)
 
         if handler is None:
-            logger.warning(f"No handler found for {event_name}")
+            logger.warning(f"No handler found for {packet.op}")
             return
 
         async with AsyncExitStack() as cm:
@@ -103,13 +100,9 @@ class PacketHandler(BaseEventHandler):
                 return
 
             try:
+                # TODO: mock request object? or access an internal API to fetch it
                 solved = await solve_dependencies(
-                    request=ws,
-                    dependant=dependant,
-                    async_exit_stack=cm,
-                    body=packet.d,
-                    dependency_overrides_provider=ws.app,
-                    embed_body_fields=True,
+                    dependant=dependant, async_exit_stack=cm
                 )
 
                 if inspect.iscoroutinefunction(dependant.call):
@@ -119,11 +112,15 @@ class PacketHandler(BaseEventHandler):
                     await loop.run_in_executor(
                         None, functools.partial(dependant.call, **solved.values)
                     )
-            except ValidationError:
+            except ValidationError as e:
                 logger.opt(exception=e).error(e)
-                await ws.close(CloseCode.INVALID_DATA, "Invalid data received")
-            except WebSocketException as e:
-                await ws.close(e.code, e.reason)
+                await send_and_disconnect(
+                    sid,
+                    SocketException(CloseCode.INVALID_DATA, "Invalid data received"),
+                    namespace=namespace,
+                )
+            except SocketException as e:
+                await send_and_disconnect(sid, e, namespace=namespace)
             except Exception as e:
                 logger.opt(exception=e).error(
                     "An error occurred when dispatching a packet"
@@ -139,7 +136,7 @@ class PacketHandler(BaseEventHandler):
             event_name = str(event_name)
 
         if event_name in self._registry and event_name != "*":
-            logger.warn(f"Overwriting handler for {event_name}")
+            logger.warning(f"Overwriting handler for {event_name}")
 
         path_format = f"packet:{event_name}"
 
@@ -158,13 +155,14 @@ class PacketHandler(BaseEventHandler):
 
     def _get_injection_params(self) -> dict[Any, Any]:
         return {
-            Event: EventDep,
+            "sid": SidDep,
             Packet: PacketDep,
             "packet": DelayedInjection(
                 lambda p: Annotated[
                     p.annotation, Depends(get_custom_packet(p.annotation))
                 ]
             ),
+            "namespace": NamespaceDep,
         }
 
     def _inject_params(self, func: Callable) -> None:
@@ -213,39 +211,47 @@ class PacketHandler(BaseEventHandler):
         del self._registry[event_name]
 
 
-def dispatch(ws: WebSocket, packet: Packet):
-    return event_dispatcher(
-        str(packet.op), [ws, packet], middleware_id=WORLD_PACKETS_MIDDLEWARE_ID
-    )
+async def get_session() -> dict[str, Any]:
+    sid = _event.get()[0]
+    return await sio.get_session(sid)
 
 
-def get_event() -> Event:
-    return _event.get()
-
-
-EventDep = Annotated[Event, Depends(get_event)]
-
-
-def get_user_id(ws: WebSocket) -> int:
-    return ws.state.user_id
+def get_user_id(session: Annotated[dict[str, Any], Depends(get_session)]) -> int:
+    return session["user_id"]
 
 
 async def get_current_user(user_id: Annotated[int, Depends(get_user_id)]) -> UserTable:
     user = await UserTable.query_by_id(user_id)
 
     if user is None or user.id != user_id:
-        raise WebSocketException(
-            CloseCode.AUTHENTICATION_FAILED, "Authentication failed"
-        )
+        raise SocketException(CloseCode.AUTHENTICATION_FAILED, "Authentication failed")
 
     return user
 
 
+def get_event() -> Event:
+    return _event.get()
+
+
+def get_sid(event=Depends(get_event)) -> str:
+    return event[0]
+
+
+SidDep = Annotated[str, Depends(get_sid)]
+
+
 def get_packet(event=Depends(get_event)) -> Packet:
-    return event[1][1]
+    return event[1]
 
 
 PacketDep = Annotated[Packet, Depends(get_packet)]
+
+
+def get_namespace(event=Depends(get_event)) -> str | None:
+    return event[2]
+
+
+NamespaceDep = Annotated[str | None, Depends(get_namespace)]
 
 
 def get_custom_packet(cls=Packet):
@@ -258,5 +264,91 @@ def get_custom_packet(cls=Packet):
 packet_handlers = PacketHandler()
 
 
-async def send_packet(ws: WebSocket, op: str, d: Any) -> None:
-    await ws.send_text(Packet(op=op, d=d).model_dump_json())
+def get_current_room_key(
+    sid: SidDep,
+    *,
+    namespace: NamespaceDep = None,
+    prefix="room:",
+) -> str:
+    rooms = sio.manager.get_rooms(sid, namespace)
+    if rooms is not None:
+        for room in filter(lambda k: k.startswith(prefix), rooms):
+            return room
+
+    raise SocketException(CloseCode.NOT_IN_ROOM, "Not in a room")
+
+
+def get_current_room(
+    sid: SidDep,
+    *,
+    namespace: NamespaceDep = None,
+    prefix="room:",
+) -> int:
+    return int(
+        get_current_room_key(sid, namespace=namespace, prefix=prefix).split(":")[-1]
+    )
+
+
+def get_current_game_key(
+    sid: SidDep,
+    *,
+    namespace: NamespaceDep = None,
+) -> str:
+    return get_current_room_key(sid, namespace=namespace, prefix="game:")
+
+
+def get_current_game(
+    sid: SidDep,
+    *,
+    namespace: NamespaceDep = None,
+) -> str:
+    return get_current_game_key(sid, namespace=namespace).split(":")[-1]
+
+
+async def authenticate(token: str) -> int:
+    try:
+        oauth = get_oauth_data(token, raise_expired=True)
+        return get_current_user_id(oauth)
+    except ExpiredSignatureError:
+        raise ConnectionRefusedError(CloseCode.TOKEN_EXPIRED, "Token expired")
+    except HTTPException:
+        raise ConnectionRefusedError(
+            CloseCode.AUTHENTICATION_FAILED, "Authentication failed"
+        )
+
+
+@sio.event
+async def connect(sid: str, environ: dict[str, Any], auth: dict[str, Any]) -> bool:
+    token = auth.get("token")
+    if not token:
+        return False
+
+    user_id = await authenticate(token)
+    logger.info(f"User {user_id} connected")
+
+    try:
+        # save user_id to session
+        await sio.save_session(sid, {"user_id": user_id})
+    except KeyError:
+        # probably disconnected? ignore
+        logger.error(f"User {user_id} disconnected before session could be saved")
+        return False
+
+    global_dispatch(EventEnum.WORLD_CLIENT_CONNECT, sid)
+    return True
+
+
+@sio.event
+async def message(sid: str, event_name: str, data: Any) -> None:
+    packet = Packet(op=event_name, d=data)
+    logger.info(f"Dispatching packet for {packet.op} with data {packet.d}")
+    await packet_handlers.handle(sid, packet, namespace="/world")
+
+
+@sio.event
+async def disconnect(sid: str) -> None:
+    session = await sio.get_session(sid)
+    user_id = session["user_id"]
+
+    logger.info(f"User {user_id} disconnected")
+    global_dispatch(EventEnum.WORLD_CLIENT_DISCONNECT, sid)

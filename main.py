@@ -9,7 +9,6 @@ from fastapi_events.middleware import EventHandlerASGIMiddleware
 from loguru import logger
 from pydantic import ValidationError
 from sentry_sdk.integrations.loguru import LoguruIntegration
-from starlette.exceptions import HTTPException
 from starlette.middleware.cors import CORSMiddleware
 from starlette.types import ASGIApp
 from starlette_context.middleware import RawContextMiddleware
@@ -26,10 +25,8 @@ from frostbite.core.config import (
     SENTRY_DSN,
     WORLD_PACKETS_MIDDLEWARE_ID,
 )
-from frostbite.core.error.http_error import http_error_handler
-from frostbite.core.error.validation_error import http422_error_handler
+from frostbite.core.socket import sio
 from frostbite.core.lifespan import manage_app_lifespan
-from frostbite.routes import router, sio
 from frostbite.utils.routes import get_modules
 
 print(
@@ -112,30 +109,16 @@ def get_application() -> ASGIApp:
 
     logger.info("Frostbite adding startup and shutdown events")
 
-    logger.debug(f"Frostbite adding Packet Handler ASGI Middleware for {WORLD_PACKETS_MIDDLEWARE_ID}")
-    application.add_middleware(
-        EventHandlerASGIMiddleware,
-        handlers=[handlers.packet_handlers],
-        middleware_id=WORLD_PACKETS_MIDDLEWARE_ID,
-    )
-
     logger.info("Frostbite adding packet handlers")
-
     get_modules(handlers, global_namespace="FROSTBITE_HANDLERS_LIST")
 
-    logger.info("Frostbite adding WS endpoint routers")
-    application.include_router(router, prefix=_prefix)
-
     logger.info("Frostbite adding events")
-
     get_modules(events, global_namespace="FROSTBITE_EVENTS_LIST")
 
     logger.info("Frostbite setup complete")
     logger.info("Frostbite is ready to be started in a ASGI service")
 
-    sio_application = socketio.ASGIApp(sio, other_asgi_app=application)
-
-    return sio_application
+    return application
 
 
 app = get_application()
@@ -144,6 +127,9 @@ app = get_application()
 @app.get("/sentry-test")
 async def trigger_error_error():
     division_by_zero = 1 / 0
+
+
+app = socketio.ASGIApp(sio, other_asgi_app=app)
 
 
 if __name__ == "__main__":
