@@ -15,7 +15,7 @@ from frostbite.models.waddle import Waddle
 
 
 class RoomJoinData(BaseModel):
-    room_id: int
+    room_id: int | None
     x: float | None = None
     y: float | None = None
 
@@ -139,30 +139,12 @@ async def handle_room_join(
     if room is not None:
         await remove_from_room(room, sid, user=user, namespace=namespace)
 
-    safe = get_safe_coordinates(packet.d.room_id)
+    room_id = packet.d.room_id or random.choice(SPAWN_ROOMS)
+    safe = get_safe_coordinates(room_id)
     x = packet.d.x or safe[0]
     y = packet.d.y or safe[1]
 
-    await add_to_room(f"rooms:{packet.d.room_id}", sid, user=user, x=x, y=y, namespace=namespace)
-
-
-@packet_handlers.register("room:spawn")
-async def handle_room_spawn(
-    sid: str,
-    user: Annotated[UserTable, Depends(get_current_user)],
-    namespace: str,
-):
-    room = get_room_for(sid, namespace=namespace, prefix="rooms:")
-    if room is not None:
-        await remove_from_room(room, sid, user=user, namespace=namespace)
-
-    room_id = random.choice(SPAWN_ROOMS)
-    # TODO: get available rooms and dispatch a room:join with a safe x, y from crumbs
-    safe = get_safe_coordinates(room_id)
-
-    await add_to_room(
-        f"rooms:{room_id}", sid, user=user, x=safe[0], y=safe[1], namespace=namespace
-    )
+    await add_to_room(f"rooms:{room_id}", sid, user=user, x=x, y=y, namespace=namespace)
 
 
 @packet_handlers.register("waddle:join")
