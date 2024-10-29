@@ -327,6 +327,8 @@ async def authenticate(token: str) -> int:
 
 @sio.event
 async def connect(sid: str, environ: dict[str, Any], auth: dict[str, Any]) -> bool:
+    global_dispatch(EventEnum.USER_CONNECT, sid)
+
     token = auth.get("token")
     if not token:
         return False
@@ -342,7 +344,7 @@ async def connect(sid: str, environ: dict[str, Any], auth: dict[str, Any]) -> bo
         logger.error(f"User {user_id} disconnected before session could be saved")
         return False
 
-    global_dispatch(EventEnum.WORLD_CLIENT_CONNECT, sid)
+    global_dispatch(EventEnum.USER_AUTH, sid)
 
     return True
 
@@ -360,4 +362,4 @@ async def disconnect(sid: str) -> None:
     user_id = session["user_id"]
 
     logger.info(f"User {user_id} disconnected")
-    global_dispatch(EventEnum.WORLD_CLIENT_DISCONNECT, sid)
+    global_dispatch(EventEnum.USER_DISCONNECT, sid)
