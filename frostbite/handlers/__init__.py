@@ -16,6 +16,7 @@ from loguru import logger
 from pydantic import ValidationError
 from socketio.exceptions import ConnectionRefusedError
 
+from frostbite.core.config import DEFAULT_WORLD_NAMESPACE
 from frostbite.core.constants.close import CloseCode
 from frostbite.core.constants.events import EventEnum
 from frostbite.core.socket import SocketException, send_and_disconnect, send_packet, sio
@@ -25,7 +26,7 @@ from frostbite.models.packet import Packet
 from frostbite.utils.auth import get_current_user_id, get_oauth_data
 from frostbite.utils.dependencies import solve_dependencies
 
-type Event = tuple[str, Packet, str | None]
+type Event = tuple[str, Packet, str]
 _event: ContextVar[Event] = ContextVar("sid")
 
 
@@ -82,9 +83,10 @@ class PacketHandler:
         self._unregister_handler(op, func)
 
     async def handle(
-        self, sid: str, packet: Packet, *, namespace: str | None = None
+        self, sid: str, packet: Packet, *, namespace: str = DEFAULT_WORLD_NAMESPACE
     ) -> None:
         _event.set((sid, packet, namespace))
+        print(namespace)
 
         handler = self._get_handler_for_event(event_name=packet.op)
 
@@ -233,25 +235,25 @@ def get_event() -> Event:
     return _event.get()
 
 
-def get_sid(event=Depends(get_event)) -> str:
+def get_sid(event: Annotated[Event, Depends(get_event)]) -> str:
     return event[0]
 
 
 SidDep = Annotated[str, Depends(get_sid)]
 
 
-def get_packet(event=Depends(get_event)) -> Packet:
+def get_packet(event: Annotated[Event, Depends(get_event)]) -> Packet:
     return event[1]
 
 
 PacketDep = Annotated[Packet, Depends(get_packet)]
 
 
-def get_namespace(event=Depends(get_event)) -> str | None:
+def get_namespace(event: Annotated[Event, Depends(get_event)]) -> str:
     return event[2]
 
 
-NamespaceDep = Annotated[str | None, Depends(get_namespace)]
+NamespaceDep = Annotated[str, Depends(get_namespace)]
 
 
 def get_custom_packet(cls=Packet):
@@ -264,45 +266,51 @@ def get_custom_packet(cls=Packet):
 packet_handlers = PacketHandler()
 
 
-def get_current_room_key(
-    sid: SidDep,
-    *,
-    namespace: NamespaceDep = None,
-    prefix="room:",
-) -> str:
+def get_room_for(sid: str, *, namespace: str, prefix: str) -> str | None:
     rooms = sio.manager.get_rooms(sid, namespace)
     if rooms is not None:
         for room in filter(lambda k: k.startswith(prefix), rooms):
             return room
 
-    raise SocketException(CloseCode.NOT_IN_ROOM, "Not in a room")
-
 
 def get_current_room(
     sid: SidDep,
     *,
-    namespace: NamespaceDep = None,
-    prefix="room:",
+    namespace: NamespaceDep,
+    prefix: str = "rooms:",
+) -> str:
+    room = get_room_for(sid, namespace=namespace, prefix=prefix)
+
+    if room is not None:
+        return room
+
+    raise SocketException(CloseCode.NOT_IN_ROOM, "Not in a room")
+
+
+def get_current_room_id(
+    sid: SidDep,
+    *,
+    namespace: NamespaceDep,
 ) -> int:
     return int(
-        get_current_room_key(sid, namespace=namespace, prefix=prefix).split(":")[-1]
+        get_current_room(sid, namespace=namespace).split(":")[-1]
     )
 
 
-def get_current_game_key(
+def get_current_game_id(
     sid: SidDep,
     *,
-    namespace: NamespaceDep = None,
+    namespace: NamespaceDep,
 ) -> str:
-    return get_current_room_key(sid, namespace=namespace, prefix="game:")
+    return get_current_room(sid, namespace=namespace, prefix="games:")
 
 
 def get_current_game(
     sid: SidDep,
     *,
-    namespace: NamespaceDep = None,
+    namespace: NamespaceDep,
 ) -> str:
-    return get_current_game_key(sid, namespace=namespace).split(":")[-1]
+    return get_current_game_id(sid, namespace=namespace).split(":")[-1]
 
 
 async def authenticate(token: str) -> int:
@@ -335,14 +343,15 @@ async def connect(sid: str, environ: dict[str, Any], auth: dict[str, Any]) -> bo
         return False
 
     global_dispatch(EventEnum.WORLD_CLIENT_CONNECT, sid)
+
     return True
 
 
-@sio.event
+@sio.event(namespace=DEFAULT_WORLD_NAMESPACE)
 async def message(sid: str, event_name: str, data: Any) -> None:
     packet = Packet(op=event_name, d=data)
     logger.info(f"Dispatching packet for {packet.op} with data {packet.d}")
-    await packet_handlers.handle(sid, packet, namespace="/world")
+    await packet_handlers.handle(sid, packet, namespace=DEFAULT_WORLD_NAMESPACE)
 
 
 @sio.event

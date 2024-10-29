@@ -15,7 +15,9 @@ class GameStartResponse(BaseModel):
 
 @packet_handlers.register("game:start")
 async def handle_game_start(
-    sid: str, packet: Packet[GameStartData]
+    sid: str,
+    packet: Packet[GameStartData],
+    namespace: str,
 ):
     await send_packet(
         sid,
@@ -23,7 +25,9 @@ async def handle_game_start(
         GameStartResponse(
             game_id=packet.d.game_id,
         ),
+        namespace=namespace,
     )
+
 
 class GameOverData(BaseModel):
     score: int
@@ -32,9 +36,12 @@ class GameOverData(BaseModel):
 class GameOverResponse(BaseModel):
     coins: int
 
+
 @packet_handlers.register("game:over")
 async def handle_game_over(
-    sid: str, packet: Packet[GameOverData]
+    sid: str,
+    packet: Packet[GameOverData],
+    namespace: str,
 ):
     await send_packet(
         sid,
@@ -42,4 +49,5 @@ async def handle_game_over(
         GameOverResponse(
             coins=packet.d.score // 10,
         ),
+        namespace=namespace,
     )

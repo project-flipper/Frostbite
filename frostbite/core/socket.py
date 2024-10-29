@@ -28,10 +28,10 @@ class SocketException(ConnectionError):
 
 
 async def send_packet(
-    sid: str, op: str, d: Any, *, skip_sid: str | None = None, namespace: str | None = None
+    sid_or_room: str, op: str, d: Any, *, skip_sid: str | None = None, namespace: str | None = None
 ) -> None:
     packet = Packet(op=op, d=d)
-    await sio.send(packet.model_dump(), to=sid, skip_sid=skip_sid, namespace=namespace)
+    await sio.send(packet.model_dump(), to=sid_or_room, skip_sid=skip_sid, namespace=namespace)
 
 
 async def send_and_disconnect(

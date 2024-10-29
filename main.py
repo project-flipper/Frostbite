@@ -23,7 +23,6 @@ from frostbite.core.config import (
     FASTAPI_EVENTS_MIDDLEWARE_ID,
     WORLD_ID,
     SENTRY_DSN,
-    WORLD_PACKETS_MIDDLEWARE_ID,
 )
 from frostbite.core.socket import sio
 from frostbite.core.lifespan import manage_app_lifespan

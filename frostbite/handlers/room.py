@@ -6,7 +6,7 @@ from pydantic import BaseModel
 
 from frostbite.core.socket import send_packet, sio
 from frostbite.database.schema.user import UserTable
-from frostbite.handlers import get_current_room_key, get_current_user, packet_handlers
+from frostbite.handlers import get_current_room, get_current_user, get_room_for, packet_handlers
 from frostbite.models.action import Action
 from frostbite.models.packet import Packet
 from frostbite.models.player import Player
@@ -66,15 +66,15 @@ def get_safe_coordinates(room_id: int) -> tuple[float, float]:
 
 
 async def add_to_room(
-    room_id: int,
+    room_key: str,
     sid: str,
     *,
     user: UserTable,
     x: float,
     y: float,
-    namespace: str | None = None,
+    namespace: str,
 ) -> None:
-    room_key = f"rooms:{room_id}"
+    room_id = int(room_key.split(":")[-1])
 
     player = Player(
         user=await User.from_table(user),
@@ -83,7 +83,18 @@ async def add_to_room(
         action=DEFAULT_ACTION,
     )
 
-    await sio.enter_room(sid, room_key)
+    await sio.enter_room(sid, room_key, namespace=namespace)
+
+    await send_packet(
+        sid,
+        "room:join",
+        RoomJoinResponse(
+            room_id=room_id,
+            players=[player],
+            waddles=[],
+        ),
+        namespace=namespace,
+    )
 
     await send_packet(
         room_key,
@@ -93,61 +104,64 @@ async def add_to_room(
         namespace=namespace,
     )
 
-    await send_packet(
-        sid,
-        "room:join",
-        RoomJoinResponse(
-            room_id=room_id,
-            players=[
-                player
-            ],
-            waddles=[],
-        ),
+
+async def remove_from_room(
+    room_key: str,
+    sid: str,
+    *,
+    user: UserTable,
+    namespace: str,
+) -> None:
+    player = Player(
+        user=await User.from_table(user),
+        x=0,
+        y=0,
+        action=DEFAULT_ACTION,
     )
 
+    await sio.leave_room(sid, room_key, namespace=namespace)
+    await send_packet(
+        room_key,
+        "player:remove",
+        player,
+        skip_sid=sid,
+        namespace=namespace,
+    )
 
 @packet_handlers.register("room:join")
 async def handle_room_join(
     sid: str,
     packet: Packet[RoomJoinData],
     user: Annotated[UserTable, Depends(get_current_user)],
+    namespace: str,
 ):
-    room_key = f"rooms:{packet.d.room_id}"
+    room = get_room_for(sid, namespace=namespace, prefix="rooms:")
+    if room is not None:
+        await remove_from_room(room, sid, user=user, namespace=namespace)
+
     safe = get_safe_coordinates(packet.d.room_id)
     x = packet.d.x or safe[0]
     y = packet.d.y or safe[1]
 
-    await sio.enter_room(sid, room_key)
-
-    await send_packet(
-        sid,
-        "room:join",
-        RoomJoinResponse(
-            room_id=packet.d.room_id,
-            players=[
-                Player(
-                    user=await User.from_table(user),
-                    x=x,
-                    y=y,
-                    action=DEFAULT_ACTION,
-                )
-            ],
-            waddles=[],
-        ),
-    )
+    await add_to_room(f"rooms:{packet.d.room_id}", sid, user=user, x=x, y=y, namespace=namespace)
 
 
 @packet_handlers.register("room:spawn")
 async def handle_room_spawn(
     sid: str,
     user: Annotated[UserTable, Depends(get_current_user)],
+    namespace: str,
 ):
+    room = get_room_for(sid, namespace=namespace, prefix="rooms:")
+    if room is not None:
+        await remove_from_room(room, sid, user=user, namespace=namespace)
+
     room_id = random.choice(SPAWN_ROOMS)
     # TODO: get available rooms and dispatch a room:join with a safe x, y from crumbs
     safe = get_safe_coordinates(room_id)
 
     await add_to_room(
-        room_id, sid, user=user, x=safe[0], y=safe[1]
+        f"rooms:{room_id}", sid, user=user, x=safe[0], y=safe[1], namespace=namespace
     )
 
 
@@ -155,7 +169,8 @@ async def handle_room_spawn(
 async def handle_waddle_join(
     packet: Packet[WaddleJoinData],
     user: Annotated[UserTable, Depends(get_current_user)],
-    room_key: Annotated[str, Depends(get_current_room_key)],
+    room_key: Annotated[str, Depends(get_current_room)],
+    namespace: str,
 ):
     await send_packet(
         room_key,
@@ -164,6 +179,7 @@ async def handle_waddle_join(
             waddle_id=packet.d.waddle_id,
             player=user.id,
         ),
+        namespace=namespace,
     )
 
 
@@ -171,7 +187,8 @@ async def handle_waddle_join(
 async def handle_waddle_leave(
     packet: Packet[WaddleLeaveData],
     user: Annotated[UserTable, Depends(get_current_user)],
-    room_key: Annotated[str, Depends(get_current_room_key)],
+    room_key: Annotated[str, Depends(get_current_room)],
+    namespace: str,
 ):
     await send_packet(
         room_key,
@@ -180,4 +197,5 @@ async def handle_waddle_leave(
             waddle_id=packet.d.waddle_id,
             player=user.id,
         ),
+        namespace=namespace,
     )

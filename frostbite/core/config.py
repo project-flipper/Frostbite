@@ -85,9 +85,7 @@ IS_DEVELOPMENT_MODE = ENVIRONMENT_TYPE == "dev"
 
 # World
 WORLD_ID = config("WORLD_ID", cast=int, default=0)
-WORLD_PACKETS_MIDDLEWARE_ID = config(
-    "WORLD_PACKETS_MIDDLEWARE_ID", cast=int, default=id("world-packets")
-)
+DEFAULT_WORLD_NAMESPACE = config("DEFAULT_WORLD_NAMESPACE", cast=str, default="/")
 
 logging.getLogger().handlers = [InterceptHandler()]
 LOGGERS = ("uvicorn.asgi", "uvicorn.access")
