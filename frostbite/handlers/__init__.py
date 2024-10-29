@@ -40,7 +40,7 @@ class DelayedInjection:
 
 class PacketHandler:
     def __init__(self):
-        self._registry: dict[str, Callable] = {}
+        self._registry: dict[str, dict[str, Callable]] = {}
 
     def register(
         self,
@@ -48,6 +48,7 @@ class PacketHandler:
         func: Callable | None = None,
         *,
         dependencies: list[ParamDepends] | None = None,
+        namespace: str = DEFAULT_WORLD_NAMESPACE
     ):
         """Register a handler for the given packet.
 
@@ -62,10 +63,12 @@ class PacketHandler:
         Args:
             :param op: The operation to be associated with the handler. Use "*", the default value, to match all packets.
             :param func: The function to be registered as a handler.  Typically, you would use `register` as a decorator and omit this argument.
+            :param dependencies: A list of dependencies to include within the handler.
+            :param namespace: The namespace to register this handler under. Defaults to the default world namespace.
         """
 
         def wrapped(_func):
-            self._register_handler(op, _func, dependencies)
+            self._register_handler(op, _func, dependencies, namespace=namespace)
             return _func
 
         if func is None:
@@ -73,14 +76,14 @@ class PacketHandler:
 
         return wrapped(func)
 
-    def unregister(self, op: str, func: Callable) -> None:
+    def unregister(self, op: str, func: Callable, *, namespace: str = DEFAULT_WORLD_NAMESPACE) -> None:
         """Unregisters a packet handler.
 
         Args:
             :param op: The operation to be associated with the handler. Use "*", the default value, to match all packets.
             :param func: The function to be registered as a handler.  Typically, you would use `register` as a decorator and omit this argument.
         """
-        self._unregister_handler(op, func)
+        self._unregister_handler(op, func, namespace=namespace)
 
     async def handle(
         self, sid: str, packet: Packet, *, namespace: str = DEFAULT_WORLD_NAMESPACE
@@ -88,7 +91,7 @@ class PacketHandler:
         _event.set((sid, packet, namespace))
         print(namespace)
 
-        handler = self._get_handler_for_event(event_name=packet.op)
+        handler = self._get_handler_for_event(event_name=packet.op, namespace=namespace)
 
         if handler is None:
             logger.warning(f"No handler found for {packet.op}")
@@ -133,11 +136,18 @@ class PacketHandler:
         event_name: str,
         func: Callable,
         dependencies: list[ParamDepends] | None = None,
+        *,
+        namespace: str = DEFAULT_WORLD_NAMESPACE
     ):
         if not isinstance(event_name, str):
             event_name = str(event_name)
+            
+        if namespace not in self._registry:
+            self._registry[namespace] = {}
+            
+        handlers = self._registry[namespace]
 
-        if event_name in self._registry and event_name != "*":
+        if event_name in handlers and event_name != "*":
             logger.warning(f"Overwriting handler for {event_name}")
 
         path_format = f"packet:{event_name}"
@@ -153,7 +163,7 @@ class PacketHandler:
             )
         setattr(func, "__dependant__", dependant)
 
-        self._registry[event_name] = func
+        handlers[event_name] = func
 
     def _get_injection_params(self) -> dict[Any, Any]:
         return {
@@ -194,23 +204,33 @@ class PacketHandler:
         else:
             func.__signature__ = sig
 
-    def _get_handler_for_event(self, event_name) -> Callable | None:
+    def _get_handler_for_event(self, event_name, *, namespace: str = DEFAULT_WORLD_NAMESPACE) -> Callable | None:
+        if not isinstance(event_name, str):
+            event_name = str(event_name)
+            
+        if namespace not in self._registry:
+            self._registry[namespace] = {}
+            
+        handlers = self._registry[namespace]
+
+        return handlers.get(event_name)
+
+    def _unregister_handler(self, event_name, func, *, namespace: str = DEFAULT_WORLD_NAMESPACE):
         if not isinstance(event_name, str):
             event_name = str(event_name)
 
-        if event_name in self._registry:
-            return self._registry[event_name]
-
-        return self._registry.get(event_name)
-
-    def _unregister_handler(self, event_name, func):
-        if not isinstance(event_name, str):
-            event_name = str(event_name)
-
-        if event_name not in self._registry:
+        if namespace not in self._registry:
+            return
+            
+        handlers = self._registry[namespace]
+            
+        if event_name not in handlers:
             return
 
-        del self._registry[event_name]
+        del handlers[event_name]
+        
+        if len(handlers) == 0:
+            del self._registry[namespace]
 
 
 async def get_session() -> dict[str, Any]:
