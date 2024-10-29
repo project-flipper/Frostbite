@@ -109,25 +109,16 @@ def get_application() -> ASGIApp:
 
     logger.info("Frostbite adding startup and shutdown events")
 
-    logger.debug(f"Frostbite adding Packet Handler ASGI Middleware for {WORLD_PACKETS_MIDDLEWARE_ID}")
-    application.add_middleware(
-        EventHandlerASGIMiddleware,
-        handlers=[handlers.packet_handlers],
-        middleware_id=WORLD_PACKETS_MIDDLEWARE_ID,
-    )
-
     logger.info("Frostbite adding packet handlers")
     get_modules(handlers, global_namespace="FROSTBITE_HANDLERS_LIST")
 
     logger.info("Frostbite adding events")
     get_modules(events, global_namespace="FROSTBITE_EVENTS_LIST")
 
-    sio_application = socketio.ASGIApp(sio, other_asgi_app=application)
-
     logger.info("Frostbite setup complete")
     logger.info("Frostbite is ready to be started in a ASGI service")
 
-    return sio_application
+    return application
 
 
 app = get_application()
@@ -136,6 +127,9 @@ app = get_application()
 @app.get("/sentry-test")
 async def trigger_error_error():
     division_by_zero = 1 / 0
+
+
+app = socketio.ASGIApp(sio, other_asgi_app=app)
 
 
 if __name__ == "__main__":
