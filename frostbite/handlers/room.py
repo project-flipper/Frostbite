@@ -15,7 +15,7 @@ from frostbite.models.waddle import Waddle
 
 
 class RoomJoinData(BaseModel):
-    room_id: int | None
+    room_id: int | None = None
     x: float | None = None
     y: float | None = None
 
@@ -139,7 +139,7 @@ async def handle_room_join(
     if room is not None:
         await remove_from_room(room, sid, user=user, namespace=namespace)
 
-    room_id = packet.d.room_id or random.choice(SPAWN_ROOMS)
+    room_id = packet.d.room_id if packet.d.room_id is not None else random.choice(SPAWN_ROOMS)
     safe = get_safe_coordinates(room_id)
     x = packet.d.x or safe[0]
     y = packet.d.y or safe[1]
