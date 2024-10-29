@@ -2,10 +2,14 @@ import random
 from typing import Annotated
 
 from fastapi import Depends
+from fastapi_events.handlers.local import local_handler
+from fastapi_events.typing import Event
 from pydantic import BaseModel
 
+from frostbite.core.constants.events import EventEnum
 from frostbite.core.socket import send_packet, sio
 from frostbite.database.schema.user import UserTable
+from frostbite.events import dispatch
 from frostbite.handlers import get_current_room, get_current_user, get_room_for, packet_handlers
 from frostbite.models.action import Action
 from frostbite.models.packet import Packet
@@ -127,6 +131,10 @@ async def remove_from_room(
         skip_sid=sid,
         namespace=namespace,
     )
+
+@local_handler.register(event_name=str(EventEnum.USER_DISCONNECT))
+async def on_user_disconnect(event: Event) -> None:
+    return
 
 @packet_handlers.register("room:join")
 async def handle_room_join(
