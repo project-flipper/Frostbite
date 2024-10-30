@@ -19,12 +19,35 @@ from socketio.exceptions import ConnectionRefusedError
 from frostbite.core.config import DEFAULT_WORLD_NAMESPACE
 from frostbite.core.constants.close import CloseCode
 from frostbite.core.constants.events import EventEnum
-from frostbite.core.socket import SocketException, send_and_disconnect, send_packet, sio
+from frostbite.core.socket import (
+    SocketCriticalException,
+    SocketException,
+    send_and_disconnect,
+    send_error,
+    sio,
+)
 from frostbite.database.schema.user import UserTable
 from frostbite.events import dispatch as global_dispatch
 from frostbite.models.packet import Packet
 from frostbite.utils.auth import get_current_user_id, get_oauth_data
 from frostbite.utils.dependencies import solve_dependencies
+
+__all__ = (
+    "packet_handlers",
+    "get_event",
+    "get_session",
+    "get_user_id",
+    "get_current_user",
+    "get_sid",
+    "get_packet",
+    "get_namespace",
+    "get_custom_packet",
+    "PacketHandler",
+    "SessionDep",
+    "SidDep",
+    "PacketDep",
+    "NamespaceDep",
+)
 
 type Event = tuple[str, Packet, str]
 _event: ContextVar[Event] = ContextVar("sid")
@@ -48,7 +71,7 @@ class PacketHandler:
         func: Callable | None = None,
         *,
         dependencies: list[ParamDepends] | None = None,
-        namespace: str = DEFAULT_WORLD_NAMESPACE
+        namespace: str = DEFAULT_WORLD_NAMESPACE,
     ):
         """Register a handler for the given packet.
 
@@ -76,7 +99,9 @@ class PacketHandler:
 
         return wrapped(func)
 
-    def unregister(self, op: str, func: Callable, *, namespace: str = DEFAULT_WORLD_NAMESPACE) -> None:
+    def unregister(
+        self, op: str, func: Callable, *, namespace: str = DEFAULT_WORLD_NAMESPACE
+    ) -> None:
         """Unregisters a packet handler.
 
         Args:
@@ -89,7 +114,6 @@ class PacketHandler:
         self, sid: str, packet: Packet, *, namespace: str = DEFAULT_WORLD_NAMESPACE
     ) -> None:
         _event.set((sid, packet, namespace))
-        print(namespace)
 
         handler = self._get_handler_for_event(event_name=packet.op, namespace=namespace)
 
@@ -121,11 +145,15 @@ class PacketHandler:
                 logger.opt(exception=e).error(e)
                 await send_and_disconnect(
                     sid,
-                    SocketException(CloseCode.INVALID_DATA, "Invalid data received"),
+                    SocketCriticalException(
+                        CloseCode.INVALID_DATA, "Invalid data received"
+                    ),
                     namespace=namespace,
                 )
-            except SocketException as e:
+            except SocketCriticalException as e:
                 await send_and_disconnect(sid, e, namespace=namespace)
+            except SocketException as e:
+                await send_error(sid, e, namespace=namespace)
             except Exception as e:
                 logger.opt(exception=e).error(
                     "An error occurred when dispatching a packet"
@@ -137,7 +165,7 @@ class PacketHandler:
         func: Callable,
         dependencies: list[ParamDepends] | None = None,
         *,
-        namespace: str = DEFAULT_WORLD_NAMESPACE
+        namespace: str = DEFAULT_WORLD_NAMESPACE,
     ):
         if not isinstance(event_name, str):
             event_name = str(event_name)
@@ -175,6 +203,7 @@ class PacketHandler:
                 ]
             ),
             "namespace": NamespaceDep,
+            "session": SessionDep,
         }
 
     def _inject_params(self, func: Callable) -> None:
@@ -204,7 +233,9 @@ class PacketHandler:
         else:
             func.__signature__ = sig
 
-    def _get_handler_for_event(self, event_name, *, namespace: str = DEFAULT_WORLD_NAMESPACE) -> Callable | None:
+    def _get_handler_for_event(
+        self, event_name, *, namespace: str = DEFAULT_WORLD_NAMESPACE
+    ) -> Callable | None:
         if not isinstance(event_name, str):
             event_name = str(event_name)
             
@@ -215,27 +246,32 @@ class PacketHandler:
 
         return handlers.get(event_name)
 
-    def _unregister_handler(self, event_name, func, *, namespace: str = DEFAULT_WORLD_NAMESPACE):
+    def _unregister_handler(
+        self, event_name, func, *, namespace: str = DEFAULT_WORLD_NAMESPACE
+    ):
         if not isinstance(event_name, str):
             event_name = str(event_name)
 
         if namespace not in self._registry:
             return
-            
+
         handlers = self._registry[namespace]
-            
+
         if event_name not in handlers:
             return
 
         del handlers[event_name]
-        
+
         if len(handlers) == 0:
             del self._registry[namespace]
 
 
-async def get_session() -> dict[str, Any]:
+async def get_session(namespace: str = DEFAULT_WORLD_NAMESPACE) -> dict[str, Any]:
     sid = _event.get()[0]
-    return await sio.get_session(sid)
+    return await sio.get_session(sid, namespace=namespace)
+
+
+SessionDep = Annotated[dict[str, Any], Depends(get_session)]
 
 
 def get_user_id(session: Annotated[dict[str, Any], Depends(get_session)]) -> int:
@@ -246,7 +282,9 @@ async def get_current_user(user_id: Annotated[int, Depends(get_user_id)]) -> Use
     user = await UserTable.query_by_id(user_id)
 
     if user is None or user.id != user_id:
-        raise SocketException(CloseCode.AUTHENTICATION_FAILED, "Authentication failed")
+        raise SocketCriticalException(
+            CloseCode.AUTHENTICATION_FAILED, "Authentication failed"
+        )
 
     return user
 
@@ -286,53 +324,6 @@ def get_custom_packet(cls=Packet):
 packet_handlers = PacketHandler()
 
 
-def get_room_for(sid: str, *, namespace: str, prefix: str) -> str | None:
-    rooms = sio.manager.get_rooms(sid, namespace)
-    if rooms is not None:
-        for room in filter(lambda k: k.startswith(prefix), rooms):
-            return room
-
-
-def get_current_room(
-    sid: SidDep,
-    *,
-    namespace: NamespaceDep,
-    prefix: str = "rooms:",
-) -> str:
-    room = get_room_for(sid, namespace=namespace, prefix=prefix)
-
-    if room is not None:
-        return room
-
-    raise SocketException(CloseCode.NOT_IN_ROOM, "Not in a room")
-
-
-def get_current_room_id(
-    sid: SidDep,
-    *,
-    namespace: NamespaceDep,
-) -> int:
-    return int(
-        get_current_room(sid, namespace=namespace).split(":")[-1]
-    )
-
-
-def get_current_game_id(
-    sid: SidDep,
-    *,
-    namespace: NamespaceDep,
-) -> str:
-    return get_current_room(sid, namespace=namespace, prefix="games:")
-
-
-def get_current_game(
-    sid: SidDep,
-    *,
-    namespace: NamespaceDep,
-) -> str:
-    return get_current_game_id(sid, namespace=namespace).split(":")[-1]
-
-
 async def authenticate(token: str) -> int:
     try:
         oauth = get_oauth_data(token, raise_expired=True)
@@ -347,6 +338,8 @@ async def authenticate(token: str) -> int:
 
 @sio.event
 async def connect(sid: str, environ: dict[str, Any], auth: dict[str, Any]) -> bool:
+    global_dispatch(EventEnum.USER_CONNECT, sid)
+
     token = auth.get("token")
     if not token:
         return False
@@ -362,7 +355,7 @@ async def connect(sid: str, environ: dict[str, Any], auth: dict[str, Any]) -> bo
         logger.error(f"User {user_id} disconnected before session could be saved")
         return False
 
-    global_dispatch(EventEnum.WORLD_CLIENT_CONNECT, sid)
+    global_dispatch(EventEnum.USER_AUTH, sid)
 
     return True
 
@@ -379,5 +372,5 @@ async def disconnect(sid: str) -> None:
     session = await sio.get_session(sid)
     user_id = session["user_id"]
 
-    logger.info(f"User {user_id} disconnected")
-    global_dispatch(EventEnum.WORLD_CLIENT_DISCONNECT, sid)
+    logger.info(f"User {user_id} disconnected {sio.rooms(sid)}")
+    global_dispatch(EventEnum.USER_DISCONNECT, sid)

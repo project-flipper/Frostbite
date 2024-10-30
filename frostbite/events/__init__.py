@@ -17,9 +17,8 @@ def _force_fastapi_events_dispatch_as_task() -> Generator:
 
 def dispatch(
     event_name: str | Enum,
-    payload: Any | None = None,
-    middleware_id: int | None = None,
+    *args: Any
 ):
     return event_dispatcher(
-        str(event_name), payload, middleware_id=FASTAPI_EVENTS_MIDDLEWARE_ID
+        str(event_name), args, middleware_id=FASTAPI_EVENTS_MIDDLEWARE_ID
     )

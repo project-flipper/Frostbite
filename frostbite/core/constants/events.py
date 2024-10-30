@@ -4,6 +4,14 @@ from enum import Enum
 class EventEnum(Enum):
     APP_START_EVENT = "app:start"
     APP_STOP_EVENT = "app:stop"
-    WORLD_CLIENT_CONNECT = "world:client:connect"
-    WORLD_CLIENT_AUTH = "world:client:auth"
-    WORLD_CLIENT_DISCONNECT = "world:client:disconnect"
+    # World
+    USER_CONNECT = "user:connect"
+    USER_AUTH = "user:auth"
+    USER_DISCONNECT = "user:disconnect"
+    # Rooms
+    ROOM_JOIN = "room:join"
+    ROOM_LEAVE = "room:leave"
+    # Games
+    GAME_JOIN = "game:join"
+    GAME_START = "game:start"
+    GAME_OVER = "game:over"
