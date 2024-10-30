@@ -15,19 +15,23 @@ async def handle_player_action(
     room_key: Annotated[str, Depends(get_current_room)],
     namespace: str,
 ):
+    action = Action(
+        player_id=user_id,
+        frame=packet.d.frame,
+        x=packet.d.x,
+        y=packet.d.y,
+    )
+
     async with sio.session(sid) as session:
-        session["x"] = packet.d.x
-        session["y"] = packet.d.y
-        session["action"] = packet.d.frame
+        if 8 <= action.frame <= 15:
+            session["x"] = packet.d.x
+            session["y"] = packet.d.y
+        if not 26 <= action.frame <= 37:
+            session["action"] = action
 
     await send_packet(
         room_key,
         "player:action",
-        Action(
-            player_id=user_id,
-            frame=packet.d.frame,
-            x=packet.d.x,
-            y=packet.d.y,
-        ),
+        action,
         namespace=namespace,
     )
