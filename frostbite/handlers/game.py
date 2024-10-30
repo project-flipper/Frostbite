@@ -32,6 +32,8 @@ class GameStartResponse(BaseModel):
 async def add_to_game(game_key: str, sid: str, *, namespace: str) -> None:
     game_id = game_key.split(":")[1]
 
+    await sio.enter_room(sid, game_key, namespace=namespace)
+
     await send_packet(
         game_key,
         "game:start",
@@ -40,8 +42,6 @@ async def add_to_game(game_key: str, sid: str, *, namespace: str) -> None:
         ),
         namespace=namespace,
     )
-
-    await sio.enter_room(sid, game_key, namespace=namespace)
 
 
 @packet_handlers.register("game:start")
