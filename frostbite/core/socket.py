@@ -18,7 +18,7 @@ __all__ = (
     "get_sids_in_room",
 )
 
-SocketIOAsyncRedisManager = socketio.AsyncRedisManager(REDIS_URL)
+SocketIOAsyncRedisManager = socketio.AsyncRedisManager(REDIS_URL.render_as_string(False))
 SocketIOAsyncServer = socketio.AsyncServer(
     async_mode="asgi",
     client_manager=SocketIOAsyncRedisManager,
