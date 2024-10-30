@@ -73,7 +73,7 @@ async def add_to_room(
     y: float,
     namespace: str,
 ) -> None:
-    room_id = int(room_key.split(":")[1])
+    room_id = int(room_key.split(":")[-1])
 
     async with sio.session(sid) as session:
         session['room_id'] = room_id
@@ -150,7 +150,7 @@ async def on_room_join(event: Event) -> None:
         sid,
         "room:join",
         RoomJoinResponse(
-            room_id=int(room_key.split(":")[1]),
+            room_id=int(room_key.split(":")[-1]),
             players=players,
             waddles=[],
         ),
