@@ -25,7 +25,7 @@ class User(BaseUser):
 
     @classmethod
     async def from_table(cls, user: UserTable) -> "User":
-        return User(
+        return cls(
             id=user.id,
             username=user.username,
             nickname=user.nickname,
@@ -46,7 +46,7 @@ class MyUser(BaseUser):
 
     @classmethod
     async def from_table(cls, user: UserTable) -> "MyUser":
-        return MyUser(
+        return cls(
             id=user.id,
             username=user.username,
             nickname=user.nickname,
