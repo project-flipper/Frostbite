@@ -127,7 +127,6 @@ async def handle_room_join(
 @local_handler.register(event_name=str(EventEnum.ROOM_JOIN))
 async def on_room_join(event: Event) -> None:
     _, (sid, room_key, namespace) = event
-    logger.info(f"User {sid} joined {room_key} on {namespace}")
 
     session = await sio.get_session(sid)
     player = Player(
@@ -136,6 +135,8 @@ async def on_room_join(event: Event) -> None:
         y=session["y"],
         action=session["action"],
     )
+
+    logger.info(f"User {sid} joined {room_key} on {namespace}\n{player}")
 
     players = [player]
     for other_sid in get_sids_in_room(room_key, namespace):
