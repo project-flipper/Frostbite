@@ -372,5 +372,5 @@ async def disconnect(sid: str) -> None:
     session = await sio.get_session(sid)
     user_id = session["user_id"]
 
-    logger.info(f"User {user_id} disconnected {sio.rooms(sid)}")
-    global_dispatch(EventEnum.USER_DISCONNECT, sid)
+    logger.info(f"User {user_id} disconnected")
+    global_dispatch(EventEnum.USER_DISCONNECT, sid, session, sio.rooms(sid))

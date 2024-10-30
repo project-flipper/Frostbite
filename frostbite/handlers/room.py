@@ -1,7 +1,5 @@
 import random
-from typing import Annotated
 
-from fastapi import Depends
 from fastapi_events.handlers.local import local_handler
 from fastapi_events.typing import Event
 from loguru import logger
@@ -196,6 +194,24 @@ async def on_room_leave(event: Event) -> None:
 
 @local_handler.register(event_name=str(EventEnum.USER_DISCONNECT))
 async def on_user_disconnect(event: Event) -> None:
-    _, (sid,) = event
-    logger.info(f'Disconnected user {sid} with rooms {sio.rooms(sid)}')
-    print(await sio.get_session(sid))
+    _, (sid, session, rooms) = event
+
+    user = await UserTable.query_by_id(session['user_id'])
+    if rooms is not None and user:
+        for room_key in filter(lambda k: k.startswith("rooms:"), rooms):
+            player = Player(
+                user=await User.from_table(user),
+                x=0,
+                y=0,
+                action=DEFAULT_ACTION,
+            )
+
+            await send_packet(
+                room_key,
+                "player:remove",
+                player,
+                skip_sid=sid,
+                namespace=DEFAULT_WORLD_NAMESPACE,
+            )
+
+    logger.info(f'Disconnected user {sid} ({session}) with rooms {rooms}')
