@@ -169,10 +169,10 @@ class PacketHandler:
     ):
         if not isinstance(event_name, str):
             event_name = str(event_name)
-
+            
         if namespace not in self._registry:
             self._registry[namespace] = {}
-
+            
         handlers = self._registry[namespace]
 
         if event_name in handlers and event_name != "*":
@@ -238,10 +238,10 @@ class PacketHandler:
     ) -> Callable | None:
         if not isinstance(event_name, str):
             event_name = str(event_name)
-
+            
         if namespace not in self._registry:
             self._registry[namespace] = {}
-
+            
         handlers = self._registry[namespace]
 
         return handlers.get(event_name)
