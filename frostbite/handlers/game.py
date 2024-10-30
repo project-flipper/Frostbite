@@ -1,7 +1,6 @@
-from typing import Annotated
-from fastapi import Depends
 from pydantic import BaseModel
-from frostbite.handlers import get_user_id, packet_handlers, send_packet
+from frostbite.core.socket import send_packet
+from frostbite.handlers import packet_handlers
 from frostbite.models.packet import Packet
 
 

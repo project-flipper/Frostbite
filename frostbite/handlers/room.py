@@ -4,18 +4,33 @@ from typing import Annotated
 from fastapi import Depends
 from fastapi_events.handlers.local import local_handler
 from fastapi_events.typing import Event
+from loguru import logger
 from pydantic import BaseModel
 
+from frostbite.core.config import DEFAULT_WORLD_NAMESPACE
 from frostbite.core.constants.events import EventEnum
-from frostbite.core.socket import send_packet, sio
+from frostbite.core.socket import SocketException, SocketErrorEnum, get_sids_in_room, send_packet, sio
 from frostbite.database.schema.user import UserTable
 from frostbite.events import dispatch
-from frostbite.handlers import get_current_room, get_current_user, get_room_for, packet_handlers
+from frostbite.handlers import NamespaceDep, SidDep, get_current_user, packet_handlers
 from frostbite.models.action import Action
 from frostbite.models.packet import Packet
 from frostbite.models.player import Player
 from frostbite.models.user import User
 from frostbite.models.waddle import Waddle
+
+
+def get_current_room(
+    sid: SidDep,
+    *,
+    namespace: NamespaceDep = DEFAULT_WORLD_NAMESPACE,
+) -> str:
+    rooms = sio.manager.get_rooms(sid, namespace)
+    if rooms is not None:
+        for room in filter(lambda k: k.startswith("rooms:"), rooms):
+            return room
+
+    raise SocketException(SocketErrorEnum.NOT_IN_ROOM, "Not in a room")
 
 
 class RoomJoinData(BaseModel):
@@ -29,23 +44,6 @@ class RoomJoinResponse(BaseModel):
     players: list[Player]
     waddles: list[Waddle]
 
-
-class WaddleJoinData(BaseModel):
-    waddle_id: int
-
-
-class WaddleJoinResponse(BaseModel):
-    waddle_id: int
-    player: int
-
-
-class WaddleLeaveData(BaseModel):
-    waddle_id: int
-
-
-class WaddleLeaveResponse(BaseModel):
-    waddle_id: int
-    player: int
 
 
 DEFAULT_ACTION = Action(frame=0)
@@ -73,28 +71,89 @@ async def add_to_room(
     room_key: str,
     sid: str,
     *,
-    user: UserTable,
     x: float,
     y: float,
     namespace: str,
 ) -> None:
     room_id = int(room_key.split(":")[-1])
 
-    player = Player(
-        user=await User.from_table(user),
-        x=x,
-        y=y,
-        action=DEFAULT_ACTION,
-    )
+    async with sio.session(sid) as session:
+        session['room_id'] = room_id
+        session['x'] = x
+        session['y'] = y
+        session['action'] = DEFAULT_ACTION
 
     await sio.enter_room(sid, room_key, namespace=namespace)
+    dispatch(EventEnum.ROOM_JOIN, sid, room_key, namespace)
+
+
+async def remove_from_room(
+    room_key: str,
+    sid: str,
+    *,
+    namespace: str,
+) -> None:
+    await sio.leave_room(sid, room_key, namespace=namespace)
+    dispatch(EventEnum.ROOM_LEAVE, sid, room_key, namespace)
+
+@packet_handlers.register("room:join")
+async def handle_room_join(
+    sid: str,
+    packet: Packet[RoomJoinData],
+    namespace: str,
+):
+    try:
+        room = get_current_room(sid, namespace=namespace)
+        await remove_from_room(room, sid, namespace=namespace)
+    except SocketException:
+        pass
+
+    room_id = packet.d.room_id if packet.d.room_id is not None else random.choice(SPAWN_ROOMS)
+    safe = get_safe_coordinates(room_id)
+    x = packet.d.x or safe[0]
+    y = packet.d.y or safe[1]
+
+    await add_to_room(f"rooms:{room_id}", sid, x=x, y=y, namespace=namespace)
+
+
+@local_handler.register(event_name=str(EventEnum.ROOM_JOIN))
+async def on_room_join(event: Event) -> None:
+    _, (sid, room_key, namespace) = event
+    logger.info(f'User {sid} joined {room_key} on {namespace}')
+
+    session = await sio.get_session(sid)
+    player = Player(
+        user=await User.from_table(await get_current_user(session['user_id'])),
+        x=session['x'],
+        y=session['y'],
+        action=session['action'],
+    )
+
+    players = [player]
+    for other_sid in get_sids_in_room(room_key, namespace):
+        if other_sid == sid:
+            continue
+
+        other_session = await sio.get_session(other_sid)
+        user = await UserTable.query_by_id(other_session['user_id'])
+
+        if not user:
+            continue
+
+        other_player = Player(
+            user=await User.from_table(user),
+            x=other_session['x'],
+            y=other_session['y'],
+            action=other_session['action'],
+        )
+        players.append(other_player)
 
     await send_packet(
         sid,
         "room:join",
         RoomJoinResponse(
-            room_id=room_id,
-            players=[player],
+            room_id=int(room_key.split(":")[-1]),
+            players=players,
             waddles=[],
         ),
         namespace=namespace,
@@ -108,14 +167,17 @@ async def add_to_room(
         namespace=namespace,
     )
 
+@local_handler.register(event_name=str(EventEnum.ROOM_LEAVE))
+async def on_room_leave(event: Event) -> None:
+    _, (sid, room_key, namespace) = event
+    logger.info(f'User {sid} left {room_key} on {namespace}')
 
-async def remove_from_room(
-    room_key: str,
-    sid: str,
-    *,
-    user: UserTable,
-    namespace: str,
-) -> None:
+    session = await sio.get_session(sid)
+    user = await UserTable.query_by_id(session['user_id'])
+
+    if not user:
+        return
+
     player = Player(
         user=await User.from_table(user),
         x=0,
@@ -123,7 +185,6 @@ async def remove_from_room(
         action=DEFAULT_ACTION,
     )
 
-    await sio.leave_room(sid, room_key, namespace=namespace)
     await send_packet(
         room_key,
         "player:remove",
@@ -132,60 +193,9 @@ async def remove_from_room(
         namespace=namespace,
     )
 
+
 @local_handler.register(event_name=str(EventEnum.USER_DISCONNECT))
 async def on_user_disconnect(event: Event) -> None:
-    return
-
-@packet_handlers.register("room:join")
-async def handle_room_join(
-    sid: str,
-    packet: Packet[RoomJoinData],
-    user: Annotated[UserTable, Depends(get_current_user)],
-    namespace: str,
-):
-    room = get_room_for(sid, namespace=namespace, prefix="rooms:")
-    if room is not None:
-        await remove_from_room(room, sid, user=user, namespace=namespace)
-
-    room_id = packet.d.room_id if packet.d.room_id is not None else random.choice(SPAWN_ROOMS)
-    safe = get_safe_coordinates(room_id)
-    x = packet.d.x or safe[0]
-    y = packet.d.y or safe[1]
-
-    await add_to_room(f"rooms:{room_id}", sid, user=user, x=x, y=y, namespace=namespace)
-
-
-@packet_handlers.register("waddle:join")
-async def handle_waddle_join(
-    packet: Packet[WaddleJoinData],
-    user: Annotated[UserTable, Depends(get_current_user)],
-    room_key: Annotated[str, Depends(get_current_room)],
-    namespace: str,
-):
-    await send_packet(
-        room_key,
-        "waddle:join",
-        WaddleJoinResponse(
-            waddle_id=packet.d.waddle_id,
-            player=user.id,
-        ),
-        namespace=namespace,
-    )
-
-
-@packet_handlers.register("waddle:leave")
-async def handle_waddle_leave(
-    packet: Packet[WaddleLeaveData],
-    user: Annotated[UserTable, Depends(get_current_user)],
-    room_key: Annotated[str, Depends(get_current_room)],
-    namespace: str,
-):
-    await send_packet(
-        room_key,
-        "waddle:leave",
-        WaddleLeaveResponse(
-            waddle_id=packet.d.waddle_id,
-            player=user.id,
-        ),
-        namespace=namespace,
-    )
+    _, (sid,) = event
+    logger.info(f'Disconnected user {sid} with rooms {sio.rooms(sid)}')
+    print(await sio.get_session(sid))

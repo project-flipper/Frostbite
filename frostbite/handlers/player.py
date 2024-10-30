@@ -1,7 +1,8 @@
 from typing import Annotated
 from fastapi import Depends
 from frostbite.core.socket import send_packet
-from frostbite.handlers import get_current_room, get_user_id, packet_handlers
+from frostbite.handlers import get_user_id, packet_handlers
+from frostbite.handlers.room import get_current_room
 from frostbite.models.action import Action
 from frostbite.models.packet import Packet
 
