@@ -7,7 +7,13 @@ from pydantic import BaseModel
 
 from frostbite.core.config import DEFAULT_WORLD_NAMESPACE
 from frostbite.core.constants.events import EventEnum
-from frostbite.core.socket import SocketException, SocketErrorEnum, get_sids_in_room, send_packet, sio
+from frostbite.core.socket import (
+    SocketException,
+    SocketErrorEnum,
+    get_sids_in_room,
+    send_packet,
+    sio,
+)
 from frostbite.database.schema.user import UserTable
 from frostbite.events import dispatch
 from frostbite.handlers import NamespaceDep, SidDep, get_current_user, packet_handlers
@@ -43,7 +49,6 @@ class RoomJoinResponse(BaseModel):
     waddles: list[Waddle]
 
 
-
 DEFAULT_ACTION = Action(frame=0)
 SPAWN_ROOMS = [
     100,  # town
@@ -76,12 +81,13 @@ async def add_to_room(
     room_id = int(room_key.split(":")[-1])
 
     async with sio.session(sid) as session:
-        session['room_id'] = room_id
-        session['x'] = x
-        session['y'] = y
-        session['action'] = DEFAULT_ACTION
+        session["room_id"] = room_id
+        session["x"] = x
+        session["y"] = y
+        session["action"] = DEFAULT_ACTION
 
     await sio.enter_room(sid, room_key, namespace=namespace)
+
     dispatch(EventEnum.ROOM_JOIN, sid, room_key, namespace)
 
 
@@ -92,7 +98,9 @@ async def remove_from_room(
     namespace: str,
 ) -> None:
     await sio.leave_room(sid, room_key, namespace=namespace)
+
     dispatch(EventEnum.ROOM_LEAVE, sid, room_key, namespace)
+
 
 @packet_handlers.register("room:join")
 async def handle_room_join(
@@ -106,7 +114,9 @@ async def handle_room_join(
     except SocketException:
         pass
 
-    room_id = packet.d.room_id if packet.d.room_id is not None else random.choice(SPAWN_ROOMS)
+    room_id = (
+        packet.d.room_id if packet.d.room_id is not None else random.choice(SPAWN_ROOMS)
+    )
     safe = get_safe_coordinates(room_id)
     x = packet.d.x or safe[0]
     y = packet.d.y or safe[1]
@@ -117,14 +127,14 @@ async def handle_room_join(
 @local_handler.register(event_name=str(EventEnum.ROOM_JOIN))
 async def on_room_join(event: Event) -> None:
     _, (sid, room_key, namespace) = event
-    logger.info(f'User {sid} joined {room_key} on {namespace}')
+    logger.info(f"User {sid} joined {room_key} on {namespace}")
 
     session = await sio.get_session(sid)
     player = Player(
-        user=await User.from_table(await get_current_user(session['user_id'])),
-        x=session['x'],
-        y=session['y'],
-        action=session['action'],
+        user=await User.from_table(await get_current_user(session["user_id"])),
+        x=session["x"],
+        y=session["y"],
+        action=session["action"],
     )
 
     players = [player]
@@ -133,16 +143,16 @@ async def on_room_join(event: Event) -> None:
             continue
 
         other_session = await sio.get_session(other_sid)
-        user = await UserTable.query_by_id(other_session['user_id'])
+        user = await UserTable.query_by_id(other_session["user_id"])
 
         if not user:
             continue
 
         other_player = Player(
             user=await User.from_table(user),
-            x=other_session['x'],
-            y=other_session['y'],
-            action=other_session['action'],
+            x=other_session["x"],
+            y=other_session["y"],
+            action=other_session["action"],
         )
         players.append(other_player)
 
@@ -165,13 +175,14 @@ async def on_room_join(event: Event) -> None:
         namespace=namespace,
     )
 
+
 @local_handler.register(event_name=str(EventEnum.ROOM_LEAVE))
 async def on_room_leave(event: Event) -> None:
     _, (sid, room_key, namespace) = event
-    logger.info(f'User {sid} left {room_key} on {namespace}')
+    logger.info(f"User {sid} left {room_key} on {namespace}")
 
     session = await sio.get_session(sid)
-    user = await UserTable.query_by_id(session['user_id'])
+    user = await UserTable.query_by_id(session["user_id"])
 
     if not user:
         return
@@ -196,7 +207,7 @@ async def on_room_leave(event: Event) -> None:
 async def on_user_disconnect(event: Event) -> None:
     _, (sid, session, rooms) = event
 
-    user = await UserTable.query_by_id(session['user_id'])
+    user = await UserTable.query_by_id(session["user_id"])
     if rooms is not None and user:
         for room_key in filter(lambda k: k.startswith("rooms:"), rooms):
             player = Player(
@@ -214,4 +225,4 @@ async def on_user_disconnect(event: Event) -> None:
                 namespace=DEFAULT_WORLD_NAMESPACE,
             )
 
-    logger.info(f'Disconnected user {sid} ({session}) with rooms {rooms}')
+    logger.info(f"Disconnected user {sid} ({session}) with rooms {rooms}")

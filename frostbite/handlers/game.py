@@ -20,6 +20,7 @@ def get_current_game(
 
     raise SocketException(SocketErrorEnum.GAME_NOT_STARTED, "Not in a game")
 
+
 class GameStartData(BaseModel):
     game_id: str
 
