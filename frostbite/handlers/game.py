@@ -15,7 +15,7 @@ def get_current_game(
 ) -> str:
     rooms = sio.manager.get_rooms(sid, namespace)
     if rooms is not None:
-        for room in filter(lambda k: k.startswith("rooms:"), rooms):
+        for room in filter(lambda k: k.startswith("games:"), rooms):
             return room
 
     raise SocketException(SocketErrorEnum.GAME_NOT_STARTED, "Not in a game")
