@@ -30,7 +30,7 @@ class InterceptHandler(logging.Handler):
             and exc_info[0] is not None
             and issubclass(exc_info[0], (ValidationError, RequestValidationError))
         ):
-            logger.error("Validation error occured")
+            logger.opt(exception=exc_info).error("Validation error occured")
             return
 
         logger.opt(depth=depth, exception=record.exc_info).log(
