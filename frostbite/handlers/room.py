@@ -81,8 +81,8 @@ async def add_to_room(
         session['y'] = y
         session['action'] = DEFAULT_ACTION
 
-    await sio.enter_room(sid, room_key, namespace=namespace)
     dispatch(EventEnum.ROOM_JOIN, sid, room_key, namespace)
+    await sio.enter_room(sid, room_key, namespace=namespace)
 
 
 async def remove_from_room(
@@ -91,8 +91,8 @@ async def remove_from_room(
     *,
     namespace: str,
 ) -> None:
-    await sio.leave_room(sid, room_key, namespace=namespace)
     dispatch(EventEnum.ROOM_LEAVE, sid, room_key, namespace)
+    await sio.leave_room(sid, room_key, namespace=namespace)
 
 @packet_handlers.register("room:join")
 async def handle_room_join(
