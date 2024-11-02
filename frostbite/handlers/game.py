@@ -32,10 +32,10 @@ class GameStartResponse(BaseModel):
 async def add_to_game(game_key: str, sid: str, *, namespace: str) -> None:
     game_id = game_key.split(":")[1]
 
-    await sio.enter_room(sid, game_key, namespace=namespace)
+    #await sio.enter_room(sid, game_key, namespace=namespace)
 
     await send_packet(
-        game_key,
+        sid,
         "game:start",
         GameStartResponse(
             game_id=game_id,
@@ -76,7 +76,7 @@ async def handle_game_over(
     namespace: str,
 ):
     await send_packet(
-        game_key,
+        sid,
         "game:over",
         GameOverResponse(
             coins=packet.d.score // 10,
