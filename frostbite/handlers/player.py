@@ -1,10 +1,20 @@
+import datetime
 from typing import Annotated
 from fastapi import Depends
+from frostbite.core.constants.action_type import ActionType
 from frostbite.core.socket import send_packet, sio
 from frostbite.handlers import get_user_id, packet_handlers
 from frostbite.handlers.room import get_current_room
 from frostbite.models.action import Action
 from frostbite.models.packet import Packet
+
+
+VOLATILE_TYPES = (
+    ActionType.WADDLE,
+    ActionType.WAVE,
+    ActionType.THROW,
+    ActionType.JUMP,
+)
 
 
 @packet_handlers.register("player:action")
@@ -17,17 +27,28 @@ async def handle_player_action(
 ):
     action = Action(
         player_id=user_id,
-        frame=packet.d.frame,
+        type=packet.d.type,
         x=packet.d.x,
         y=packet.d.y,
+        to_x=packet.d.to_x,
+        to_y=packet.d.to_y,
+        since=datetime.datetime.now(datetime.timezone.utc).timestamp() * 1000,
     )
 
     async with sio.session(sid) as session:
-        if 8 <= action.frame <= 15:
-            session["x"] = packet.d.x
-            session["y"] = packet.d.y
-        if not 26 <= action.frame <= 37:
+        if packet.d.type == ActionType.WADDLE:
+            current_x = packet.d.to_x
+            current_y = packet.d.to_y
+        elif packet.d.x is not None and packet.d.y is not None:
+            current_x = packet.d.x
+            current_y = packet.d.y
+
+        if not action.type in VOLATILE_TYPES:
             session["action"] = action
+
+        if current_x is not None and current_y is not None:
+            session["x"] = current_x
+            session["y"] = current_y
 
     await send_packet(
         room_key,

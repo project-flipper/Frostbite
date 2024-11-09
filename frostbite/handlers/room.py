@@ -49,7 +49,7 @@ class RoomJoinResponse(BaseModel):
     waddles: list[Waddle]
 
 
-DEFAULT_ACTION = Action(frame=0)
+DEFAULT_ACTION = Action(type=0)
 SPAWN_ROOMS = [
     100,  # town
     200,  # village
