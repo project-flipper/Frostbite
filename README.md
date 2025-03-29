@@ -1,10 +1,10 @@
 # Frostbite
-World server for [ClubPenguin](https://github.com/clubpenguin-html5/ClubPenguin).
+World server for [ClubPenguin](https://github.com/project-flipper/ClubPenguin).
 
 # Setup
 Install **Python 3.12+** and **virtualenv** if you haven't already. Clone the github repo into a local directory using this command (it is recommended to use SSH):
 ```bash
-git clone git@github.com:clubpenguin-html5/Frostbite.git 
+git clone git@github.com:project-flipper/Frostbite.git 
 ```
 
 Then move into the `frostbite` directory (`cd ./frostbite`) and setup a virtualenv (`python3 -m virtualenv env`).
@@ -24,7 +24,7 @@ poetry install
 ```
 
 ## Database
-Install PostgreSQL server, create a file `.env` in same directory as `main.py` and add in the database details (ref: https://github.com/clubpenguin-html5/Frostbite/blob/main/frostbite/database/__init__.py)
+Install PostgreSQL server, create a file `.env` in same directory as `main.py` and add in the database details (ref: https://github.com/project-flipper/Frostbite/blob/main/frostbite/database/__init__.py)
 
 Setup the database by running the following command
 
